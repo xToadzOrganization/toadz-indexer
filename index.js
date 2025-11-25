@@ -35,6 +35,7 @@ const EVENT_SIGS = {
 
 // ==================== DATABASE ====================
 const db = new Database('./toadz.db');
+let forceStartBlock = null; // In-memory flag for immediate reset
 
 // Initialize tables
 db.exec(`
@@ -150,6 +151,13 @@ const staking = new ethers.Contract(CONTRACTS.nftStaking, STAKING_ABI, provider)
 
 // ==================== INDEXER ====================
 async function getStartBlock() {
+    // Check in-memory flag first (set by /admin/reset)
+    if (forceStartBlock !== null) {
+        const block = forceStartBlock;
+        forceStartBlock = null; // Clear flag
+        return block;
+    }
+    
     const row = stmts.getLastBlock.get();
     if (row) return row.last_block + 1;
     
@@ -581,6 +589,9 @@ app.post('/admin/reset/:days', async (req, res) => {
         db.exec('DELETE FROM events');
         db.exec('DELETE FROM notifications');
         stmts.setLastBlock.run(newStartBlock);
+        
+        // Set in-memory flag for immediate effect
+        forceStartBlock = newStartBlock + 1;
         
         console.log(`Reset to block ${newStartBlock} (${days} days ago)`);
         res.json({ success: true, new_start_block: newStartBlock, days_back: days });
