@@ -166,8 +166,8 @@ async function indexEvents() {
         const fromBlock = await getStartBlock();
         const currentBlock = await provider.getBlockNumber();
         
-        // Only 30 blocks at a time for Songbird RPC limits
-        const toBlock = Math.min(fromBlock + 30, currentBlock);
+        // Only 10 blocks at a time for Songbird RPC limits
+        const toBlock = Math.min(fromBlock + 10, currentBlock);
         
         if (fromBlock > currentBlock) {
             return; // Already synced
@@ -189,14 +189,14 @@ async function indexEvents() {
         } catch (err) {
             console.log(`  Listed query FAILED: ${err.message}`);
         }
-        await delay(500);
+        await delay(1000);
         
         try {
             unlistedEvents = await marketplace.queryFilter(marketplace.filters.Unlisted(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  Unlisted query FAILED: ${err.message}`);
         }
-        await delay(500);
+        await delay(1000);
         
         try {
             soldEvents = await marketplace.queryFilter(marketplace.filters.Sold(), fromBlock, toBlock);
@@ -204,21 +204,21 @@ async function indexEvents() {
         } catch (err) {
             console.log(`  Sold query FAILED: ${err.message}`);
         }
-        await delay(500);
+        await delay(1000);
         
         try {
             offerMadeEvents = await marketplace.queryFilter(marketplace.filters.OfferMade(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  OfferMade query FAILED: ${err.message}`);
         }
-        await delay(500);
+        await delay(1000);
         
         try {
             offerAcceptedEvents = await marketplace.queryFilter(marketplace.filters.OfferAccepted(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  OfferAccepted query FAILED: ${err.message}`);
         }
-        await delay(500);
+        await delay(1000);
         
         try {
             stakedEvents = await staking.queryFilter(staking.filters.Staked(), fromBlock, toBlock);
