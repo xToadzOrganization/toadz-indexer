@@ -6,7 +6,7 @@ const Database = require('better-sqlite3');
 // ==================== CONFIG ====================
 const PORT = process.env.PORT || 8080;
 const RPC_URL = 'https://songbird-api.flare.network/ext/C/rpc';
-const POLL_INTERVAL = 15000; // 15 seconds
+const POLL_INTERVAL = 10000; // 10 seconds (actual indexing has internal delays)
 
 // Contract addresses
 const CONTRACTS = {
@@ -153,18 +153,21 @@ async function getStartBlock() {
     const row = stmts.getLastBlock.get();
     if (row) return row.last_block + 1;
     
-    // Start from ~1 day ago if fresh
+    // Start from ~3 days ago if fresh (gives more history)
     const current = await provider.getBlockNumber();
-    return Math.max(0, current - 5760); // ~1 day at 15s blocks
+    return Math.max(0, current - 17280); // ~3 days at 15s blocks
 }
+
+// Helper to delay between requests
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function indexEvents() {
     try {
         const fromBlock = await getStartBlock();
         const currentBlock = await provider.getBlockNumber();
         
-        // Don't go more than 100 blocks at a time to avoid rate limits
-        const toBlock = Math.min(fromBlock + 100, currentBlock);
+        // Only 30 blocks at a time for Songbird RPC limits
+        const toBlock = Math.min(fromBlock + 30, currentBlock);
         
         if (fromBlock > currentBlock) {
             return; // Already synced
@@ -172,15 +175,23 @@ async function indexEvents() {
         
         console.log(`Indexing blocks ${fromBlock} to ${toBlock}...`);
         
-        // Query all events in parallel
-        const [listedEvents, unlistedEvents, soldEvents, offerMadeEvents, offerAcceptedEvents, stakedEvents] = await Promise.all([
-            marketplace.queryFilter(marketplace.filters.Listed(), fromBlock, toBlock).catch(() => []),
-            marketplace.queryFilter(marketplace.filters.Unlisted(), fromBlock, toBlock).catch(() => []),
-            marketplace.queryFilter(marketplace.filters.Sold(), fromBlock, toBlock).catch(() => []),
-            marketplace.queryFilter(marketplace.filters.OfferMade(), fromBlock, toBlock).catch(() => []),
-            marketplace.queryFilter(marketplace.filters.OfferAccepted(), fromBlock, toBlock).catch(() => []),
-            staking.queryFilter(staking.filters.Staked(), fromBlock, toBlock).catch(() => [])
-        ]);
+        // Query events sequentially with delays to avoid rate limits
+        const listedEvents = await marketplace.queryFilter(marketplace.filters.Listed(), fromBlock, toBlock).catch(() => []);
+        await delay(500);
+        
+        const unlistedEvents = await marketplace.queryFilter(marketplace.filters.Unlisted(), fromBlock, toBlock).catch(() => []);
+        await delay(500);
+        
+        const soldEvents = await marketplace.queryFilter(marketplace.filters.Sold(), fromBlock, toBlock).catch(() => []);
+        await delay(500);
+        
+        const offerMadeEvents = await marketplace.queryFilter(marketplace.filters.OfferMade(), fromBlock, toBlock).catch(() => []);
+        await delay(500);
+        
+        const offerAcceptedEvents = await marketplace.queryFilter(marketplace.filters.OfferAccepted(), fromBlock, toBlock).catch(() => []);
+        await delay(500);
+        
+        const stakedEvents = await staking.queryFilter(staking.filters.Staked(), fromBlock, toBlock).catch(() => []);
         
         // Get block timestamps (batch)
         const blockNumbers = new Set();
@@ -346,11 +357,15 @@ async function indexEvents() {
         const totalEvents = listedEvents.length + soldEvents.length + offerMadeEvents.length + 
                           offerAcceptedEvents.length + unlistedEvents.length + stakedEvents.length;
         if (totalEvents > 0) {
-            console.log(`Indexed ${totalEvents} events`);
+            console.log(`Found ${totalEvents} events (${listedEvents.length} listed, ${soldEvents.length} sold, ${stakedEvents.length} staked)`);
         }
+        
+        // Delay before next iteration to respect rate limits
+        await delay(2000);
         
     } catch (err) {
         console.error('Indexer error:', err.message);
+        await delay(5000); // Wait longer on error
     }
 }
 
@@ -523,6 +538,26 @@ app.get('/stats', (req, res) => {
         ...stats,
         last_indexed_block: lastBlock?.last_block || 0
     });
+});
+
+// Reset and rescan from X days ago
+app.post('/admin/reset/:days', async (req, res) => {
+    try {
+        const days = parseInt(req.params.days) || 7;
+        const blocksBack = days * 5760; // ~5760 blocks per day
+        const currentBlock = await provider.getBlockNumber();
+        const newStartBlock = Math.max(0, currentBlock - blocksBack);
+        
+        // Clear database and set new start block
+        db.exec('DELETE FROM events');
+        db.exec('DELETE FROM notifications');
+        stmts.setLastBlock.run(newStartBlock);
+        
+        console.log(`Reset to block ${newStartBlock} (${days} days ago)`);
+        res.json({ success: true, new_start_block: newStartBlock, days_back: days });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 function formatEvent(e) {
