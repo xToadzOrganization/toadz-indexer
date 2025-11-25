@@ -128,14 +128,14 @@ const stmts = {
 // ==================== PROVIDER ====================
 const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
 
-// ABIs (minimal for event parsing)
+// ABIs (minimal for event parsing) - MUST MATCH DEPLOYED CONTRACT
 const MARKETPLACE_ABI = [
-    'event Listed(address indexed collection, uint256 indexed tokenId, address indexed seller, uint256 priceSGB, uint256 pricePOND)',
-    'event Unlisted(address indexed collection, uint256 indexed tokenId, address indexed seller)',
-    'event Sold(address indexed collection, uint256 indexed tokenId, address seller, address indexed buyer, uint256 priceSGB, uint256 pricePOND)',
-    'event OfferMade(address indexed collection, uint256 indexed tokenId, address indexed buyer, uint256 amountSGB, uint256 amountPOND, uint256 expiry)',
-    'event OfferAccepted(address indexed collection, uint256 indexed tokenId, address seller, address indexed buyer, uint256 amountSGB, uint256 amountPOND)',
-    'event OfferCancelled(address indexed collection, uint256 indexed tokenId, address indexed buyer)',
+    'event Listed(address indexed nftContract, uint256 indexed tokenId, address indexed seller, uint256 price, uint256 feeAmount)',
+    'event Unlisted(address indexed nftContract, uint256 indexed tokenId, address indexed seller)',
+    'event Sold(address indexed nftContract, uint256 indexed tokenId, address indexed buyer, address seller, uint256 price, uint256 feeAmount)',
+    'event OfferMade(address indexed nftContract, uint256 indexed tokenId, address indexed buyer, uint256 amount, uint256 expiry)',
+    'event OfferAccepted(address indexed nftContract, uint256 indexed tokenId, address indexed buyer, address seller, uint256 amount)',
+    'event OfferCancelled(address indexed nftContract, uint256 indexed tokenId, address indexed buyer)',
     'function getListing(address collection, uint256 tokenId) view returns (address seller, uint256 priceSGB, uint256 pricePOND, bool active)',
     'function getActiveListings(address collection) view returns (uint256[])'
 ];
@@ -212,15 +212,14 @@ async function indexEvents() {
         const processEvents = db.transaction(() => {
             // Listed events
             for (const e of listedEvents) {
-                const collection = e.args.collection;
+                const collection = e.args.nftContract;
                 const tokenId = e.args.tokenId.toNumber();
                 const seller = e.args.seller;
-                const priceSGB = ethers.utils.formatEther(e.args.priceSGB);
-                const pricePOND = ethers.utils.formatEther(e.args.pricePOND);
+                const price = ethers.utils.formatEther(e.args.price);
                 
                 const result = stmts.insertEvent.run(
                     e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'listed', collection, tokenId, seller, null, priceSGB, pricePOND
+                    'listed', collection, tokenId, seller, null, price, '0'
                 );
                 
                 if (result.changes > 0) {
@@ -235,20 +234,19 @@ async function indexEvents() {
             
             // Sold events
             for (const e of soldEvents) {
-                const collection = e.args.collection;
+                const collection = e.args.nftContract;
                 const tokenId = e.args.tokenId.toNumber();
                 const seller = e.args.seller;
                 const buyer = e.args.buyer;
-                const priceSGB = ethers.utils.formatEther(e.args.priceSGB);
-                const pricePOND = ethers.utils.formatEther(e.args.pricePOND);
+                const price = ethers.utils.formatEther(e.args.price);
                 
                 const result = stmts.insertEvent.run(
                     e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'sold', collection, tokenId, seller, buyer, priceSGB, pricePOND
+                    'sold', collection, tokenId, seller, buyer, price, '0'
                 );
                 
                 if (result.changes > 0) {
-                    const priceStr = parseFloat(priceSGB) > 0 ? `${priceSGB} SGB` : `${pricePOND} POND`;
+                    const priceStr = `${price} SGB`;
                     
                     // RED notification for seller (money incoming!)
                     stmts.insertNotification.run(
@@ -268,15 +266,14 @@ async function indexEvents() {
             
             // Offer made events
             for (const e of offerMadeEvents) {
-                const collection = e.args.collection;
+                const collection = e.args.nftContract;
                 const tokenId = e.args.tokenId.toNumber();
                 const buyer = e.args.buyer;
-                const amountSGB = ethers.utils.formatEther(e.args.amountSGB);
-                const amountPOND = ethers.utils.formatEther(e.args.amountPOND);
+                const amount = ethers.utils.formatEther(e.args.amount);
                 
                 const result = stmts.insertEvent.run(
                     e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'offer_made', collection, tokenId, buyer, null, amountSGB, amountPOND
+                    'offer_made', collection, tokenId, buyer, null, amount, '0'
                 );
                 
                 // We need to find the seller to notify them - query the listing
@@ -288,20 +285,19 @@ async function indexEvents() {
             
             // Offer accepted events
             for (const e of offerAcceptedEvents) {
-                const collection = e.args.collection;
+                const collection = e.args.nftContract;
                 const tokenId = e.args.tokenId.toNumber();
                 const seller = e.args.seller;
                 const buyer = e.args.buyer;
-                const amountSGB = ethers.utils.formatEther(e.args.amountSGB);
-                const amountPOND = ethers.utils.formatEther(e.args.amountPOND);
+                const amount = ethers.utils.formatEther(e.args.amount);
                 
                 const result = stmts.insertEvent.run(
                     e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'offer_accepted', collection, tokenId, seller, buyer, amountSGB, amountPOND
+                    'offer_accepted', collection, tokenId, seller, buyer, amount, '0'
                 );
                 
                 if (result.changes > 0) {
-                    const priceStr = parseFloat(amountSGB) > 0 ? `${amountSGB} SGB` : `${amountPOND} POND`;
+                    const priceStr = `${amount} SGB`;
                     
                     // RED for seller
                     stmts.insertNotification.run(
@@ -323,7 +319,7 @@ async function indexEvents() {
             for (const e of unlistedEvents) {
                 stmts.insertEvent.run(
                     e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'unlisted', e.args.collection, e.args.tokenId.toNumber(),
+                    'unlisted', e.args.nftContract, e.args.tokenId.toNumber(),
                     e.args.seller, null, '0', '0'
                 );
             }
