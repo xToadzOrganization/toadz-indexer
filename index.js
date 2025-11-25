@@ -544,6 +544,13 @@ app.post('/user/:address/notifications/read', (req, res) => {
     res.json({ success: true });
 });
 
+// Clear all notifications for user
+app.post('/user/:address/notifications/clear', (req, res) => {
+    const addr = req.params.address.toLowerCase();
+    db.prepare('DELETE FROM notifications WHERE user_address = ?').run(addr);
+    res.json({ success: true });
+});
+
 // Floor prices
 app.get('/floors', (req, res) => {
     const floors = stmts.getFloors.all();
@@ -617,6 +624,66 @@ function getTimeAgo(timestamp) {
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
     return Math.floor(diff / 86400) + 'd ago';
 }
+
+// Leaderboard - Top Stakers
+app.get('/leaderboard/stakers', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+        const stakers = db.prepare(`
+            SELECT 
+                from_address as address,
+                COUNT(*) as nfts_staked
+            FROM events 
+            WHERE event_type = 'staked'
+            GROUP BY from_address
+            ORDER BY nfts_staked DESC
+            LIMIT ?
+        `).all(limit);
+        
+        res.json(stakers.map(s => ({
+            address: s.address,
+            nftsStaked: s.nfts_staked,
+            pondEarned: 0 // Would need separate tracking
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Leaderboard - Top Traders
+app.get('/leaderboard/traders', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+        const traders = db.prepare(`
+            SELECT 
+                to_address as address,
+                COUNT(*) as sales_count,
+                SUM(CAST(price_sgb AS REAL)) as volume_sgb,
+                SUM(CAST(price_pond AS REAL)) as volume_pond
+            FROM events 
+            WHERE event_type = 'sold'
+            GROUP BY to_address
+            ORDER BY volume_sgb DESC
+            LIMIT ?
+        `).all(limit);
+        
+        res.json(traders.map(t => ({
+            address: t.address,
+            salesCount: t.sales_count,
+            volumeSGB: t.volume_sgb || 0,
+            volumePOND: t.volume_pond || 0
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Leaderboard - Top LP Providers
+app.get('/leaderboard/lp', (req, res) => {
+    // LP leaderboard requires querying the pool contract for each depositor
+    // For now, return empty - would need to index AddLiquidity events
+    res.json([]);
+});
 
 // ==================== START ====================
 app.listen(PORT, () => {
