@@ -176,22 +176,55 @@ async function indexEvents() {
         console.log(`Indexing blocks ${fromBlock} to ${toBlock}...`);
         
         // Query events sequentially with delays to avoid rate limits
-        const listedEvents = await marketplace.queryFilter(marketplace.filters.Listed(), fromBlock, toBlock).catch(() => []);
+        let listedEvents = [];
+        let unlistedEvents = [];
+        let soldEvents = [];
+        let offerMadeEvents = [];
+        let offerAcceptedEvents = [];
+        let stakedEvents = [];
+        
+        try {
+            listedEvents = await marketplace.queryFilter(marketplace.filters.Listed(), fromBlock, toBlock);
+            console.log(`  Listed query: ${listedEvents.length} events`);
+        } catch (err) {
+            console.log(`  Listed query FAILED: ${err.message}`);
+        }
         await delay(500);
         
-        const unlistedEvents = await marketplace.queryFilter(marketplace.filters.Unlisted(), fromBlock, toBlock).catch(() => []);
+        try {
+            unlistedEvents = await marketplace.queryFilter(marketplace.filters.Unlisted(), fromBlock, toBlock);
+        } catch (err) {
+            console.log(`  Unlisted query FAILED: ${err.message}`);
+        }
         await delay(500);
         
-        const soldEvents = await marketplace.queryFilter(marketplace.filters.Sold(), fromBlock, toBlock).catch(() => []);
+        try {
+            soldEvents = await marketplace.queryFilter(marketplace.filters.Sold(), fromBlock, toBlock);
+            console.log(`  Sold query: ${soldEvents.length} events`);
+        } catch (err) {
+            console.log(`  Sold query FAILED: ${err.message}`);
+        }
         await delay(500);
         
-        const offerMadeEvents = await marketplace.queryFilter(marketplace.filters.OfferMade(), fromBlock, toBlock).catch(() => []);
+        try {
+            offerMadeEvents = await marketplace.queryFilter(marketplace.filters.OfferMade(), fromBlock, toBlock);
+        } catch (err) {
+            console.log(`  OfferMade query FAILED: ${err.message}`);
+        }
         await delay(500);
         
-        const offerAcceptedEvents = await marketplace.queryFilter(marketplace.filters.OfferAccepted(), fromBlock, toBlock).catch(() => []);
+        try {
+            offerAcceptedEvents = await marketplace.queryFilter(marketplace.filters.OfferAccepted(), fromBlock, toBlock);
+        } catch (err) {
+            console.log(`  OfferAccepted query FAILED: ${err.message}`);
+        }
         await delay(500);
         
-        const stakedEvents = await staking.queryFilter(staking.filters.Staked(), fromBlock, toBlock).catch(() => []);
+        try {
+            stakedEvents = await staking.queryFilter(staking.filters.Staked(), fromBlock, toBlock);
+        } catch (err) {
+            console.log(`  Staked query FAILED: ${err.message}`);
+        }
         
         // Get block timestamps (batch)
         const blockNumbers = new Set();
