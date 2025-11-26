@@ -641,6 +641,35 @@ app.get('/floors', (req, res) => {
     res.json(result);
 });
 
+// Collection stats
+app.get('/collection/:address/stats', (req, res) => {
+    const address = req.params.address;
+    
+    try {
+        const stats = db.prepare(`
+            SELECT 
+                COUNT(*) as total_sales,
+                COALESCE(SUM(CAST(price_sgb AS REAL)), 0) as volume_sgb,
+                COALESCE(SUM(CAST(price_pond AS REAL)), 0) as volume_pond
+            FROM events
+            WHERE event_type = 'sold' AND LOWER(collection) = LOWER(?)
+        `).get(address);
+        
+        // Get floor from floors table
+        const floor = db.prepare('SELECT floor_sgb, floor_pond FROM floors WHERE LOWER(collection) = LOWER(?)').get(address);
+        
+        res.json({
+            totalSales: stats?.total_sales || 0,
+            volumeSGB: stats?.volume_sgb || 0,
+            volumePOND: stats?.volume_pond || 0,
+            floorSGB: floor?.floor_sgb || null,
+            floorPOND: floor?.floor_pond || null
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Stats
 app.get('/stats', (req, res) => {
     const stats = db.prepare(`
