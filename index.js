@@ -163,6 +163,43 @@ const STAKING_ABI = [
 const marketplace = new ethers.Contract(CONTRACTS.marketplace, MARKETPLACE_ABI, provider);
 const staking = new ethers.Contract(CONTRACTS.nftStaking, STAKING_ABI, provider);
 
+// ==================== HELPER FUNCTIONS ====================
+// FIXED: Added null check to prevent crash
+function getCollectionName(address) {
+    if (!address) return 'Unknown';
+    try {
+        const col = COLLECTIONS[address] || COLLECTIONS[address.toLowerCase()];
+        return col ? col.name : 'NFT';
+    } catch (err) {
+        return 'NFT';
+    }
+}
+
+function getTimeAgo(timestamp) {
+    if (!timestamp) return 'Unknown';
+    try {
+        const now = Math.floor(Date.now() / 1000);
+        const diff = now - timestamp;
+        
+        if (diff < 60) return 'Just now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return Math.floor(diff / 86400) + 'd ago';
+    } catch (err) {
+        return 'Unknown';
+    }
+}
+
+// FIXED: Added null checks for all properties
+function formatEvent(e) {
+    if (!e) return null;
+    return {
+        ...e,
+        collection_name: getCollectionName(e.collection),
+        time_ago: getTimeAgo(e.timestamp)
+    };
+}
+
 // ==================== INDEXER ====================
 async function getStartBlock() {
     // Check in-memory flag first (set by /admin/reset)
@@ -275,154 +312,195 @@ async function indexEvents() {
         const processEvents = db.transaction(() => {
             // Listed events
             for (const e of listedEvents) {
-                const collection = e.args.nftContract;
-                const tokenId = e.args.tokenId.toNumber();
-                const seller = e.args.seller;
-                const price = ethers.utils.formatEther(e.args.price);
-                
-                const result = stmts.insertEvent.run(
-                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'listed', collection, tokenId, seller, null, price, '0'
-                );
-                
-                if (result.changes > 0) {
-                    // Green notification for seller
-                    stmts.insertNotification.run(
-                        seller.toLowerCase(), result.lastInsertRowid, 'listed', 'green',
-                        'NFT Listed', `Your ${getCollectionName(collection)} #${tokenId} is now listed`,
-                        collection, tokenId
+                try {
+                    const collection = e.args.nftContract;
+                    const tokenId = e.args.tokenId.toNumber();
+                    const seller = e.args.seller;
+                    const price = ethers.utils.formatEther(e.args.price);
+                    
+                    if (!collection || !seller) continue; // Skip invalid events
+                    
+                    const result = stmts.insertEvent.run(
+                        e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                        'listed', collection, tokenId, seller, null, price, '0'
                     );
+                    
+                    if (result.changes > 0) {
+                        // Green notification for seller
+                        stmts.insertNotification.run(
+                            seller.toLowerCase(), result.lastInsertRowid, 'listed', 'green',
+                            'NFT Listed', `Your ${getCollectionName(collection)} #${tokenId} is now listed`,
+                            collection, tokenId
+                        );
+                    }
+                } catch (err) {
+                    console.log(`Error processing listed event: ${err.message}`);
                 }
             }
             
             // Sold events
             for (const e of soldEvents) {
-                const collection = e.args.nftContract;
-                const tokenId = e.args.tokenId.toNumber();
-                const seller = e.args.seller;
-                const buyer = e.args.buyer;
-                const price = ethers.utils.formatEther(e.args.price);
-                
-                const result = stmts.insertEvent.run(
-                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'sold', collection, tokenId, seller, buyer, price, '0'
-                );
-                
-                if (result.changes > 0) {
-                    const priceStr = `${price} SGB`;
+                try {
+                    const collection = e.args.nftContract;
+                    const tokenId = e.args.tokenId.toNumber();
+                    const seller = e.args.seller;
+                    const buyer = e.args.buyer;
+                    const price = ethers.utils.formatEther(e.args.price);
                     
-                    // RED notification for seller (money incoming!)
-                    stmts.insertNotification.run(
-                        seller.toLowerCase(), result.lastInsertRowid, 'sold', 'red',
-                        'NFT Sold!', `Your ${getCollectionName(collection)} #${tokenId} sold for ${priceStr}`,
-                        collection, tokenId
+                    if (!collection || !seller || !buyer) continue; // Skip invalid events
+                    
+                    const result = stmts.insertEvent.run(
+                        e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                        'sold', collection, tokenId, seller, buyer, price, '0'
                     );
                     
-                    // Green notification for buyer
-                    stmts.insertNotification.run(
-                        buyer.toLowerCase(), result.lastInsertRowid, 'purchased', 'green',
-                        'NFT Purchased', `You bought ${getCollectionName(collection)} #${tokenId}`,
-                        collection, tokenId
-                    );
+                    if (result.changes > 0) {
+                        const priceStr = `${price} SGB`;
+                        
+                        // RED notification for seller (money incoming!)
+                        stmts.insertNotification.run(
+                            seller.toLowerCase(), result.lastInsertRowid, 'sold', 'red',
+                            'NFT Sold!', `Your ${getCollectionName(collection)} #${tokenId} sold for ${priceStr}`,
+                            collection, tokenId
+                        );
+                        
+                        // Green notification for buyer
+                        stmts.insertNotification.run(
+                            buyer.toLowerCase(), result.lastInsertRowid, 'purchased', 'green',
+                            'NFT Purchased', `You bought ${getCollectionName(collection)} #${tokenId}`,
+                            collection, tokenId
+                        );
+                    }
+                } catch (err) {
+                    console.log(`Error processing sold event: ${err.message}`);
                 }
             }
             
             // Offer made events
             for (const e of offerMadeEvents) {
-                const collection = e.args.nftContract;
-                const tokenId = e.args.tokenId.toNumber();
-                const buyer = e.args.buyer;
-                const amount = ethers.utils.formatEther(e.args.amount);
-                
-                const result = stmts.insertEvent.run(
-                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'offer_made', collection, tokenId, buyer, null, amount, '0'
-                );
-                
-                // We need to find the seller to notify them - query the listing
-                if (result.changes > 0) {
-                    // Note: seller notification happens via separate lookup
-                    // For now, we'll handle this in a follow-up query
+                try {
+                    const collection = e.args.nftContract;
+                    const tokenId = e.args.tokenId.toNumber();
+                    const buyer = e.args.buyer;
+                    const amount = ethers.utils.formatEther(e.args.amount);
+                    
+                    if (!collection || !buyer) continue; // Skip invalid events
+                    
+                    const result = stmts.insertEvent.run(
+                        e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                        'offer_made', collection, tokenId, buyer, null, amount, '0'
+                    );
+                    
+                    // We need to find the seller to notify them - query the listing
+                    if (result.changes > 0) {
+                        // Note: seller notification happens via separate lookup
+                        // For now, we'll handle this in a follow-up query
+                    }
+                } catch (err) {
+                    console.log(`Error processing offer_made event: ${err.message}`);
                 }
             }
             
             // Offer accepted events
             for (const e of offerAcceptedEvents) {
-                const collection = e.args.nftContract;
-                const tokenId = e.args.tokenId.toNumber();
-                const seller = e.args.seller;
-                const buyer = e.args.buyer;
-                const amount = ethers.utils.formatEther(e.args.amount);
-                
-                const result = stmts.insertEvent.run(
-                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'offer_accepted', collection, tokenId, seller, buyer, amount, '0'
-                );
-                
-                if (result.changes > 0) {
-                    const priceStr = `${amount} SGB`;
+                try {
+                    const collection = e.args.nftContract;
+                    const tokenId = e.args.tokenId.toNumber();
+                    const seller = e.args.seller;
+                    const buyer = e.args.buyer;
+                    const amount = ethers.utils.formatEther(e.args.amount);
                     
-                    // RED for seller
-                    stmts.insertNotification.run(
-                        seller.toLowerCase(), result.lastInsertRowid, 'offer_accepted', 'red',
-                        'Offer Accepted!', `You sold ${getCollectionName(collection)} #${tokenId} for ${priceStr}`,
-                        collection, tokenId
+                    if (!collection || !seller || !buyer) continue; // Skip invalid events
+                    
+                    const result = stmts.insertEvent.run(
+                        e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                        'offer_accepted', collection, tokenId, seller, buyer, amount, '0'
                     );
                     
-                    // Green for buyer
-                    stmts.insertNotification.run(
-                        buyer.toLowerCase(), result.lastInsertRowid, 'offer_accepted', 'green',
-                        'Offer Accepted', `Your offer on ${getCollectionName(collection)} #${tokenId} was accepted`,
-                        collection, tokenId
-                    );
+                    if (result.changes > 0) {
+                        const priceStr = `${amount} SGB`;
+                        
+                        // RED for seller
+                        stmts.insertNotification.run(
+                            seller.toLowerCase(), result.lastInsertRowid, 'offer_accepted', 'red',
+                            'Offer Accepted!', `You sold ${getCollectionName(collection)} #${tokenId} for ${priceStr}`,
+                            collection, tokenId
+                        );
+                        
+                        // Green for buyer
+                        stmts.insertNotification.run(
+                            buyer.toLowerCase(), result.lastInsertRowid, 'offer_accepted', 'green',
+                            'Offer Accepted', `Your offer on ${getCollectionName(collection)} #${tokenId} was accepted`,
+                            collection, tokenId
+                        );
+                    }
+                } catch (err) {
+                    console.log(`Error processing offer_accepted event: ${err.message}`);
                 }
             }
             
             // Unlisted events
             for (const e of unlistedEvents) {
-                stmts.insertEvent.run(
-                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'unlisted', e.args.nftContract, e.args.tokenId.toNumber(),
-                    e.args.seller, null, '0', '0'
-                );
+                try {
+                    if (!e.args.nftContract || !e.args.seller) continue;
+                    stmts.insertEvent.run(
+                        e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                        'unlisted', e.args.nftContract, e.args.tokenId.toNumber(),
+                        e.args.seller, null, '0', '0'
+                    );
+                } catch (err) {
+                    console.log(`Error processing unlisted event: ${err.message}`);
+                }
             }
             
             // Staked events
             for (const e of stakedEvents) {
-                const user = e.args.user;
-                const collection = e.args.collection;
-                const tokenId = e.args.tokenId.toNumber();
-                
-                const result = stmts.insertEvent.run(
-                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'staked', collection, tokenId, user, null, '0', '0'
-                );
-                
-                if (result.changes > 0) {
-                    stmts.insertNotification.run(
-                        user.toLowerCase(), result.lastInsertRowid, 'staked', 'green',
-                        'NFT Staked', `${getCollectionName(collection)} #${tokenId} is now earning rewards`,
-                        collection, tokenId
+                try {
+                    const user = e.args.user;
+                    const collection = e.args.collection;
+                    const tokenId = e.args.tokenId.toNumber();
+                    
+                    if (!user || !collection) continue; // Skip invalid events
+                    
+                    const result = stmts.insertEvent.run(
+                        e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                        'staked', collection, tokenId, user, null, '0', '0'
                     );
+                    
+                    if (result.changes > 0) {
+                        stmts.insertNotification.run(
+                            user.toLowerCase(), result.lastInsertRowid, 'staked', 'green',
+                            'NFT Staked', `${getCollectionName(collection)} #${tokenId} is now earning rewards`,
+                            collection, tokenId
+                        );
+                    }
+                } catch (err) {
+                    console.log(`Error processing staked event: ${err.message}`);
                 }
             }
             
             // RewardsClaimed events
             for (const e of rewardsClaimedEvents) {
-                const user = e.args.user;
-                const amount = ethers.utils.formatEther(e.args.amount);
-                
-                const result = stmts.insertEvent.run(
-                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                    'rewards_claimed', null, null, user, null, '0', amount
-                );
-                
-                if (result.changes > 0) {
-                    stmts.insertNotification.run(
-                        user.toLowerCase(), result.lastInsertRowid, 'rewards_claimed', 'green',
-                        'POND Claimed', `You claimed ${parseFloat(amount).toLocaleString()} POND`,
-                        null, null
+                try {
+                    const user = e.args.user;
+                    const amount = ethers.utils.formatEther(e.args.amount);
+                    
+                    if (!user) continue; // Skip invalid events
+                    
+                    const result = stmts.insertEvent.run(
+                        e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                        'rewards_claimed', null, null, user, null, '0', amount
                     );
+                    
+                    if (result.changes > 0) {
+                        stmts.insertNotification.run(
+                            user.toLowerCase(), result.lastInsertRowid, 'rewards_claimed', 'green',
+                            'POND Claimed', `You claimed ${parseFloat(amount).toLocaleString()} POND`,
+                            null, null
+                        );
+                    }
+                } catch (err) {
+                    console.log(`Error processing rewards_claimed event: ${err.message}`);
                 }
             }
             
@@ -460,6 +538,7 @@ async function notifyOfferSellers() {
         
         for (const offer of recentOffers) {
             try {
+                if (!offer.collection) continue; // Skip if no collection
                 const [seller, , , active] = await marketplace.getListing(offer.collection, offer.token_id);
                 if (active && seller !== ethers.constants.AddressZero) {
                     const priceStr = parseFloat(offer.price_sgb) > 0 ? `${offer.price_sgb} SGB` : `${offer.price_pond} POND`;
@@ -519,11 +598,6 @@ async function updateFloors() {
     }
 }
 
-function getCollectionName(address) {
-    const col = COLLECTIONS[address] || COLLECTIONS[address.toLowerCase()];
-    return col ? col.name : 'NFT';
-}
-
 // ==================== API ====================
 const app = express();
 app.use(cors());
@@ -536,16 +610,24 @@ app.get('/', (req, res) => {
 
 // Recent activity (all)
 app.get('/activity', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    const events = stmts.getRecentEvents.all(limit);
-    res.json(events.map(formatEvent));
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+        const events = stmts.getRecentEvents.all(limit);
+        res.json(events.map(formatEvent).filter(e => e !== null));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Collection activity
 app.get('/activity/:collection', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    const events = stmts.getCollectionEvents.all(req.params.collection, limit);
-    res.json(events.map(formatEvent));
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+        const events = stmts.getCollectionEvents.all(req.params.collection, limit);
+        res.json(events.map(formatEvent).filter(e => e !== null));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // User activity
@@ -585,60 +667,86 @@ app.get('/user/:address/stats', (req, res) => {
 });
 
 app.get('/user/:address/activity', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    const addr = req.params.address.toLowerCase();
-    const events = stmts.getUserEvents.all(addr, addr, limit);
-    res.json(events.map(formatEvent));
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+        const addr = req.params.address.toLowerCase();
+        const events = stmts.getUserEvents.all(addr, addr, limit);
+        res.json(events.map(formatEvent).filter(e => e !== null));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // User notifications
 app.get('/user/:address/notifications', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    const addr = req.params.address.toLowerCase();
-    const notifications = stmts.getUserNotifications.all(addr, limit);
-    res.json(notifications);
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+        const addr = req.params.address.toLowerCase();
+        const notifications = stmts.getUserNotifications.all(addr, limit);
+        res.json(notifications);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Unread notification counts
 app.get('/user/:address/notifications/unread', (req, res) => {
-    const addr = req.params.address.toLowerCase();
-    const notifications = stmts.getUnreadNotifications.all(addr);
-    
-    const counts = { red: 0, green: 0, total: 0 };
-    for (const n of notifications) {
-        counts[n.urgency]++;
-        counts.total++;
+    try {
+        const addr = req.params.address.toLowerCase();
+        const notifications = stmts.getUnreadNotifications.all(addr);
+        
+        const counts = { red: 0, green: 0, total: 0 };
+        for (const n of notifications) {
+            if (n.urgency && counts.hasOwnProperty(n.urgency)) {
+                counts[n.urgency]++;
+            }
+            counts.total++;
+        }
+        
+        res.json({ counts, notifications });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-    
-    res.json({ counts, notifications });
 });
 
 // Mark notifications read
 app.post('/user/:address/notifications/read', (req, res) => {
-    const addr = req.params.address.toLowerCase();
-    stmts.markNotificationsRead.run(addr);
-    res.json({ success: true });
+    try {
+        const addr = req.params.address.toLowerCase();
+        stmts.markNotificationsRead.run(addr);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Clear all notifications for user
 app.post('/user/:address/notifications/clear', (req, res) => {
-    const addr = req.params.address.toLowerCase();
-    db.prepare('DELETE FROM notifications WHERE user_address = ?').run(addr);
-    res.json({ success: true });
+    try {
+        const addr = req.params.address.toLowerCase();
+        db.prepare('DELETE FROM notifications WHERE user_address = ?').run(addr);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Floor prices
 app.get('/floors', (req, res) => {
-    const floors = stmts.getFloors.all();
-    const result = {};
-    for (const f of floors) {
-        result[f.collection] = {
-            floor_sgb: f.floor_sgb,
-            floor_pond: f.floor_pond,
-            updated_at: f.updated_at
-        };
+    try {
+        const floors = stmts.getFloors.all();
+        const result = {};
+        for (const f of floors) {
+            result[f.collection] = {
+                floor_sgb: f.floor_sgb,
+                floor_pond: f.floor_pond,
+                updated_at: f.updated_at
+            };
+        }
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-    res.json(result);
 });
 
 // Collection stats
@@ -672,21 +780,25 @@ app.get('/collection/:address/stats', (req, res) => {
 
 // Stats
 app.get('/stats', (req, res) => {
-    const stats = db.prepare(`
-        SELECT 
-            COUNT(*) as total_events,
-            SUM(CASE WHEN event_type = 'sold' THEN 1 ELSE 0 END) as total_sales,
-            SUM(CASE WHEN event_type = 'sold' THEN CAST(price_sgb AS REAL) ELSE 0 END) as volume_sgb,
-            SUM(CASE WHEN event_type = 'sold' THEN CAST(price_pond AS REAL) ELSE 0 END) as volume_pond
-        FROM events
-    `).get();
-    
-    const lastBlock = stmts.getLastBlock.get();
-    
-    res.json({
-        ...stats,
-        last_indexed_block: lastBlock?.last_block || 0
-    });
+    try {
+        const stats = db.prepare(`
+            SELECT 
+                COUNT(*) as total_events,
+                SUM(CASE WHEN event_type = 'sold' THEN 1 ELSE 0 END) as total_sales,
+                SUM(CASE WHEN event_type = 'sold' THEN CAST(price_sgb AS REAL) ELSE 0 END) as volume_sgb,
+                SUM(CASE WHEN event_type = 'sold' THEN CAST(price_pond AS REAL) ELSE 0 END) as volume_pond
+            FROM events
+        `).get();
+        
+        const lastBlock = stmts.getLastBlock.get();
+        
+        res.json({
+            ...stats,
+            last_indexed_block: lastBlock?.last_block || 0
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Reset and rescan from X days ago
@@ -711,24 +823,6 @@ app.post('/admin/reset/:days', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-function formatEvent(e) {
-    return {
-        ...e,
-        collection_name: getCollectionName(e.collection),
-        time_ago: getTimeAgo(e.timestamp)
-    };
-}
-
-function getTimeAgo(timestamp) {
-    const now = Math.floor(Date.now() / 1000);
-    const diff = now - timestamp;
-    
-    if (diff < 60) return 'Just now';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return Math.floor(diff / 86400) + 'd ago';
-}
 
 // Leaderboard - Top Stakers
 app.get('/leaderboard/stakers', (req, res) => {
@@ -760,13 +854,15 @@ app.get('/leaderboard/stakers', (req, res) => {
         // Create map for quick lookup
         const claimedMap = {};
         for (const c of claimedTotals) {
-            claimedMap[c.address.toLowerCase()] = c.total_claimed || 0;
+            if (c.address) {
+                claimedMap[c.address.toLowerCase()] = c.total_claimed || 0;
+            }
         }
         
         res.json(stakers.map(s => ({
             address: s.address,
             nftsStaked: s.nfts_staked,
-            pondClaimed: claimedMap[s.address.toLowerCase()] || 0
+            pondClaimed: s.address ? (claimedMap[s.address.toLowerCase()] || 0) : 0
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
