@@ -144,7 +144,8 @@ const MARKETPLACE_ABI = [
 
 const STAKING_ABI = [
     'event Staked(address indexed user, address indexed collection, uint256 tokenId)',
-    'event Unstaked(address indexed user, address indexed collection, uint256 tokenId)'
+    'event Unstaked(address indexed user, address indexed collection, uint256 tokenId)',
+    'event RewardsClaimed(address indexed user, uint256 amount)'
 ];
 
 const marketplace = new ethers.Contract(CONTRACTS.marketplace, MARKETPLACE_ABI, provider);
@@ -191,6 +192,7 @@ async function indexEvents() {
         let offerMadeEvents = [];
         let offerAcceptedEvents = [];
         let stakedEvents = [];
+        let rewardsClaimedEvents = [];
         
         try {
             listedEvents = await marketplace.queryFilter(marketplace.filters.Listed(), fromBlock, toBlock);
@@ -234,10 +236,17 @@ async function indexEvents() {
         } catch (err) {
             console.log(`  Staked query FAILED: ${err.message}`);
         }
+        await delay(1000);
+        
+        try {
+            rewardsClaimedEvents = await staking.queryFilter(staking.filters.RewardsClaimed(), fromBlock, toBlock);
+        } catch (err) {
+            console.log(`  RewardsClaimed query FAILED: ${err.message}`);
+        }
         
         // Get block timestamps (batch)
         const blockNumbers = new Set();
-        [...listedEvents, ...unlistedEvents, ...soldEvents, ...offerMadeEvents, ...offerAcceptedEvents, ...stakedEvents]
+        [...listedEvents, ...unlistedEvents, ...soldEvents, ...offerMadeEvents, ...offerAcceptedEvents, ...stakedEvents, ...rewardsClaimedEvents]
             .forEach(e => blockNumbers.add(e.blockNumber));
         
         const timestamps = {};
@@ -386,6 +395,25 @@ async function indexEvents() {
                 }
             }
             
+            // RewardsClaimed events
+            for (const e of rewardsClaimedEvents) {
+                const user = e.args.user;
+                const amount = ethers.utils.formatEther(e.args.amount);
+                
+                const result = stmts.insertEvent.run(
+                    e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
+                    'rewards_claimed', null, null, user, null, '0', amount
+                );
+                
+                if (result.changes > 0) {
+                    stmts.insertNotification.run(
+                        user.toLowerCase(), result.lastInsertRowid, 'rewards_claimed', 'green',
+                        'POND Claimed', `You claimed ${parseFloat(amount).toLocaleString()} POND`,
+                        null, null
+                    );
+                }
+            }
+            
             // Update last synced block
             stmts.setLastBlock.run(toBlock);
         });
@@ -393,9 +421,9 @@ async function indexEvents() {
         processEvents();
         
         const totalEvents = listedEvents.length + soldEvents.length + offerMadeEvents.length + 
-                          offerAcceptedEvents.length + unlistedEvents.length + stakedEvents.length;
+                          offerAcceptedEvents.length + unlistedEvents.length + stakedEvents.length + rewardsClaimedEvents.length;
         if (totalEvents > 0) {
-            console.log(`Found ${totalEvents} events (${listedEvents.length} listed, ${soldEvents.length} sold, ${stakedEvents.length} staked)`);
+            console.log(`Found ${totalEvents} events (${listedEvents.length} listed, ${soldEvents.length} sold, ${stakedEvents.length} staked, ${rewardsClaimedEvents.length} claimed)`);
         }
         
         // Delay before next iteration to respect rate limits
@@ -630,6 +658,8 @@ function getTimeAgo(timestamp) {
 app.get('/leaderboard/stakers', (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+        
+        // Get stakers with their staked count
         const stakers = db.prepare(`
             SELECT 
                 from_address as address,
@@ -641,10 +671,26 @@ app.get('/leaderboard/stakers', (req, res) => {
             LIMIT ?
         `).all(limit);
         
+        // Get claimed POND totals per address
+        const claimedTotals = db.prepare(`
+            SELECT 
+                from_address as address,
+                SUM(CAST(price_pond AS REAL)) as total_claimed
+            FROM events 
+            WHERE event_type = 'rewards_claimed'
+            GROUP BY from_address
+        `).all();
+        
+        // Create map for quick lookup
+        const claimedMap = {};
+        for (const c of claimedTotals) {
+            claimedMap[c.address.toLowerCase()] = c.total_claimed || 0;
+        }
+        
         res.json(stakers.map(s => ({
             address: s.address,
             nftsStaked: s.nfts_staked,
-            pondEarned: 0 // Would need separate tracking
+            pondClaimed: claimedMap[s.address.toLowerCase()] || 0
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
