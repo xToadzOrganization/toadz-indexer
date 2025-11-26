@@ -810,8 +810,8 @@ app.post('/admin/reset/:days', async (req, res) => {
         const newStartBlock = Math.max(0, currentBlock - blocksBack);
         
         // Clear database and set new start block
+       db.exec('DELETE FROM notifications');
         db.exec('DELETE FROM events');
-        db.exec('DELETE FROM notifications');
         stmts.setLastBlock.run(newStartBlock);
         
         // Set in-memory flag for immediate effect
