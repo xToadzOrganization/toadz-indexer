@@ -18,9 +18,9 @@ const CONTRACTS = {
 
 // Collections
 const COLLECTIONS = {
-    '0x35afb6Ba51839dEDD33140A3b704b39933D1e642': { name: 'sToadz', symbol: 'STOADZ' },
-    '0x91Aa85a172DD3e7EEA4ad1A4B33E90cbF3B99ed8': { name: 'Luxury Lofts', symbol: 'LOFT' },
-    '0x360f8B7d9530F55AB8E52394E6527935635f51E7': { name: 'Songbird City', symbol: 'SBCITY' }
+    '0x35afb6Ba51839dEDD33140A3b704b39933D1e642': { name: 'sToadz', symbol: 'STOADZ', supply: 10000 },
+    '0x91Aa85a172DD3e7EEA4ad1A4B33E90cbF3B99ed8': { name: 'Luxury Lofts', symbol: 'LOFT', supply: 10000 },
+    '0x360f8B7d9530F55AB8E52394E6527935635f51E7': { name: 'Songbird City', symbol: 'SBCITY', supply: 10000 }
 };
 
 // Event signatures
@@ -95,11 +95,27 @@ db.exec(`
         updated_at INTEGER
     );
     
+    CREATE TABLE IF NOT EXISTS nft_ownership (
+        collection TEXT NOT NULL,
+        token_id INTEGER NOT NULL,
+        owner TEXT NOT NULL,
+        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        PRIMARY KEY (collection, token_id)
+    );
+    
+    CREATE TABLE IF NOT EXISTS ownership_sync (
+        collection TEXT PRIMARY KEY,
+        last_token_id INTEGER DEFAULT 0,
+        completed INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+    
     CREATE INDEX IF NOT EXISTS idx_events_collection ON events(collection);
     CREATE INDEX IF NOT EXISTS idx_events_block ON events(block_number DESC);
     CREATE INDEX IF NOT EXISTS idx_events_from ON events(from_address);
     CREATE INDEX IF NOT EXISTS idx_events_to ON events(to_address);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_address, is_read);
+    CREATE INDEX IF NOT EXISTS idx_nft_owner ON nft_ownership(owner);
 `);
 
 // Prepared statements
@@ -136,7 +152,21 @@ const stmts = {
         INSERT OR REPLACE INTO floors (collection, floor_sgb, floor_pond, updated_at)
         VALUES (?, ?, ?, strftime('%s', 'now'))
     `),
-    getFloors: db.prepare('SELECT * FROM floors')
+    getFloors: db.prepare('SELECT * FROM floors'),
+    
+    // NFT ownership
+    upsertOwnership: db.prepare(`
+        INSERT OR REPLACE INTO nft_ownership (collection, token_id, owner, updated_at)
+        VALUES (?, ?, ?, strftime('%s', 'now'))
+    `),
+    getUserNfts: db.prepare(`
+        SELECT collection, token_id FROM nft_ownership WHERE LOWER(owner) = LOWER(?) ORDER BY collection, token_id
+    `),
+    getOwnershipSync: db.prepare('SELECT * FROM ownership_sync WHERE collection = ?'),
+    upsertOwnershipSync: db.prepare(`
+        INSERT OR REPLACE INTO ownership_sync (collection, last_token_id, completed, updated_at)
+        VALUES (?, ?, ?, strftime('%s', 'now'))
+    `)
 };
 
 // ==================== PROVIDER ====================
@@ -158,6 +188,11 @@ const STAKING_ABI = [
     'event Staked(address indexed user, address indexed collection, uint256 tokenId)',
     'event Unstaked(address indexed user, address indexed collection, uint256 tokenId)',
     'event RewardsClaimed(address indexed user, uint256 amount)'
+];
+
+const ERC721_ABI = [
+    'function ownerOf(uint256 tokenId) view returns (address)',
+    'function balanceOf(address owner) view returns (uint256)'
 ];
 
 const marketplace = new ethers.Contract(CONTRACTS.marketplace, MARKETPLACE_ABI, provider);
@@ -598,6 +633,100 @@ async function updateFloors() {
     }
 }
 
+// ==================== NFT OWNERSHIP INDEXING ====================
+let isIndexingOwnership = false;
+
+async function indexNftOwnership() {
+    if (isIndexingOwnership) {
+        console.log('Ownership indexing already in progress, skipping...');
+        return;
+    }
+    
+    isIndexingOwnership = true;
+    console.log('Starting NFT ownership indexing...');
+    
+    try {
+        for (const [address, col] of Object.entries(COLLECTIONS)) {
+            const contract = new ethers.Contract(address, ERC721_ABI, provider);
+            const supply = col.supply || 10000;
+            
+            // Get sync state
+            let syncState = stmts.getOwnershipSync.get(address);
+            let startToken = syncState ? syncState.last_token_id + 1 : 1;
+            
+            // If completed, just do a refresh of random samples
+            if (syncState && syncState.completed) {
+                console.log(`${col.name}: Already indexed, refreshing...`);
+                // Refresh in batches - check 500 random tokens
+                const tokensToCheck = [];
+                for (let i = 0; i < 500; i++) {
+                    tokensToCheck.push(Math.floor(Math.random() * supply) + 1);
+                }
+                
+                const batchSize = 50;
+                for (let i = 0; i < tokensToCheck.length; i += batchSize) {
+                    const batch = tokensToCheck.slice(i, i + batchSize);
+                    const results = await Promise.all(
+                        batch.map(id => 
+                            contract.ownerOf(id)
+                                .then(owner => ({ id, owner }))
+                                .catch(() => ({ id, owner: null }))
+                        )
+                    );
+                    
+                    for (const { id, owner } of results) {
+                        if (owner) {
+                            stmts.upsertOwnership.run(address, id, owner.toLowerCase());
+                        }
+                    }
+                    await delay(200);
+                }
+                continue;
+            }
+            
+            console.log(`${col.name}: Indexing from token ${startToken}...`);
+            
+            // Index in batches
+            const batchSize = 50;
+            for (let start = startToken; start <= supply; start += batchSize) {
+                const end = Math.min(start + batchSize - 1, supply);
+                const tokenIds = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+                
+                const results = await Promise.all(
+                    tokenIds.map(id => 
+                        contract.ownerOf(id)
+                            .then(owner => ({ id, owner }))
+                            .catch(() => ({ id, owner: null }))
+                    )
+                );
+                
+                for (const { id, owner } of results) {
+                    if (owner) {
+                        stmts.upsertOwnership.run(address, id, owner.toLowerCase());
+                    }
+                }
+                
+                // Update sync state
+                stmts.upsertOwnershipSync.run(address, end, end >= supply ? 1 : 0);
+                
+                // Rate limit
+                await delay(300);
+                
+                // Log progress every 500 tokens
+                if (end % 500 === 0) {
+                    console.log(`${col.name}: Indexed ${end}/${supply} tokens`);
+                }
+            }
+            
+            console.log(`${col.name}: Ownership indexing complete!`);
+        }
+    } catch (err) {
+        console.error('Ownership indexing error:', err.message);
+    } finally {
+        isIndexingOwnership = false;
+    }
+}
+
 // ==================== API ====================
 const app = express();
 app.use(cors());
@@ -660,6 +789,35 @@ app.get('/user/:address/stats', (req, res) => {
             buyVolumeSGB: buyerStats?.buy_volume_sgb || 0,
             sellVolumeSGB: sellerStats?.sell_volume_sgb || 0,
             volumeSGB: (buyerStats?.buy_volume_sgb || 0) + (sellerStats?.sell_volume_sgb || 0)
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// User NFTs (from ownership index)
+app.get('/user/:address/nfts', (req, res) => {
+    try {
+        const addr = req.params.address.toLowerCase();
+        const nfts = stmts.getUserNfts.all(addr);
+        
+        // Group by collection
+        const grouped = {};
+        for (const nft of nfts) {
+            if (!grouped[nft.collection]) {
+                const col = COLLECTIONS[nft.collection] || COLLECTIONS[nft.collection.toLowerCase()];
+                grouped[nft.collection] = {
+                    collection: nft.collection,
+                    name: col?.name || 'Unknown',
+                    tokenIds: []
+                };
+            }
+            grouped[nft.collection].tokenIds.push(nft.token_id);
+        }
+        
+        res.json({
+            total: nfts.length,
+            collections: Object.values(grouped)
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -824,6 +982,38 @@ app.post('/admin/reset/:days', async (req, res) => {
     }
 });
 
+// Reset and reindex NFT ownership
+app.post('/admin/reindex-nfts', async (req, res) => {
+    try {
+        // Clear ownership tables
+        db.exec('DELETE FROM nft_ownership');
+        db.exec('DELETE FROM ownership_sync');
+        
+        // Trigger reindex (async)
+        indexNftOwnership();
+        
+        res.json({ success: true, message: 'NFT ownership reindexing started' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get ownership index status
+app.get('/admin/ownership-status', (req, res) => {
+    try {
+        const status = db.prepare('SELECT * FROM ownership_sync').all();
+        const counts = db.prepare('SELECT collection, COUNT(*) as count FROM nft_ownership GROUP BY collection').all();
+        
+        res.json({
+            syncStatus: status,
+            indexedCounts: counts,
+            isIndexing: isIndexingOwnership
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Leaderboard - Top Stakers
 app.get('/leaderboard/stakers', (req, res) => {
     try {
@@ -912,6 +1102,9 @@ app.listen(PORT, () => {
     indexEvents();
     updateFloors();
     
+    // Start NFT ownership indexing (runs in background)
+    setTimeout(() => indexNftOwnership(), 5000);
+    
     // Poll every 15 seconds
     setInterval(indexEvents, POLL_INTERVAL);
     
@@ -920,4 +1113,7 @@ app.listen(PORT, () => {
     
     // Update floors every 5 minutes
     setInterval(updateFloors, 300000);
+    
+    // Refresh ownership every 30 minutes
+    setInterval(indexNftOwnership, 1800000);
 });
