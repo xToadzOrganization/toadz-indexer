@@ -35,7 +35,19 @@ const EVENT_SIGS = {
 };
 
 // ==================== DATABASE ====================
-const db = new Database('./toadz.db');
+const fs = require('fs');
+const dbPath = fs.existsSync('/data') ? '/data/indexer.db' : './indexer.db';
+console.log(`Using database path: ${dbPath}`);
+
+let db;
+try {
+    db = new Database(dbPath);
+    console.log('Database connected successfully');
+} catch (err) {
+    console.error('Database connection failed:', err.message);
+    console.log('Falling back to in-memory database');
+    db = new Database(':memory:');
+}
 let forceStartBlock = null; // In-memory flag for immediate reset
 
 // Initialize tables
