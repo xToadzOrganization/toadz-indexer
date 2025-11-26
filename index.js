@@ -537,6 +537,41 @@ app.get('/activity/:collection', (req, res) => {
 });
 
 // User activity
+// User stats
+app.get('/user/:address/stats', (req, res) => {
+    const addr = req.params.address.toLowerCase();
+    
+    try {
+        // Get volume traded (as buyer)
+        const buyerStats = db.prepare(`
+            SELECT 
+                COUNT(*) as buy_count,
+                COALESCE(SUM(CAST(price_sgb AS REAL)), 0) as buy_volume_sgb
+            FROM events 
+            WHERE event_type = 'sold' AND to_address = ?
+        `).get(addr);
+        
+        // Get volume sold (as seller)
+        const sellerStats = db.prepare(`
+            SELECT 
+                COUNT(*) as sell_count,
+                COALESCE(SUM(CAST(price_sgb AS REAL)), 0) as sell_volume_sgb
+            FROM events 
+            WHERE event_type = 'sold' AND from_address = ?
+        `).get(addr);
+        
+        res.json({
+            buyCount: buyerStats?.buy_count || 0,
+            sellCount: sellerStats?.sell_count || 0,
+            buyVolumeSGB: buyerStats?.buy_volume_sgb || 0,
+            sellVolumeSGB: sellerStats?.sell_volume_sgb || 0,
+            volumeSGB: (buyerStats?.buy_volume_sgb || 0) + (sellerStats?.sell_volume_sgb || 0)
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/user/:address/activity', (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const addr = req.params.address.toLowerCase();
