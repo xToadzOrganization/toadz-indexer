@@ -6,8 +6,10 @@ const Database = require('better-sqlite3');
 
 // ==================== CONFIG ====================
 const PORT = process.env.PORT || 8080;
-const RPC_URL = 'https://songbird-api.flare.network/ext/C/rpc';
-const POLL_INTERVAL = 10000; // 10 seconds (actual indexing has internal delays)
+// Private node - no rate limits!
+const RPC_URL = 'http://135.181.215.126:9650/ext/bc/C/rpc';
+const FALLBACK_RPC = 'https://songbird-api.flare.network/ext/C/rpc';
+const POLL_INTERVAL = 5000; // 5 seconds - faster with private node
 
 // Contract addresses
 const CONTRACTS = {
@@ -284,14 +286,14 @@ async function indexEvents() {
         } catch (err) {
             console.log(`  Listed query FAILED: ${err.message}`);
         }
-        await delay(1000);
+        await delay(100);
         
         try {
             unlistedEvents = await marketplace.queryFilter(marketplace.filters.Unlisted(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  Unlisted query FAILED: ${err.message}`);
         }
-        await delay(1000);
+        await delay(100);
         
         try {
             soldEvents = await marketplace.queryFilter(marketplace.filters.Sold(), fromBlock, toBlock);
@@ -299,28 +301,28 @@ async function indexEvents() {
         } catch (err) {
             console.log(`  Sold query FAILED: ${err.message}`);
         }
-        await delay(1000);
+        await delay(100);
         
         try {
             offerMadeEvents = await marketplace.queryFilter(marketplace.filters.OfferMade(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  OfferMade query FAILED: ${err.message}`);
         }
-        await delay(1000);
+        await delay(100);
         
         try {
             offerAcceptedEvents = await marketplace.queryFilter(marketplace.filters.OfferAccepted(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  OfferAccepted query FAILED: ${err.message}`);
         }
-        await delay(1000);
+        await delay(100);
         
         try {
             stakedEvents = await staking.queryFilter(staking.filters.Staked(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  Staked query FAILED: ${err.message}`);
         }
-        await delay(1000);
+        await delay(100);
         
         try {
             rewardsClaimedEvents = await staking.queryFilter(staking.filters.RewardsClaimed(), fromBlock, toBlock);
@@ -551,12 +553,12 @@ async function indexEvents() {
             console.log(`Found ${totalEvents} events (${listedEvents.length} listed, ${soldEvents.length} sold, ${stakedEvents.length} staked, ${rewardsClaimedEvents.length} claimed)`);
         }
         
-        // Delay before next iteration to respect rate limits
-        await delay(2000);
+        // Delay before next iteration - faster with private node
+        await delay(500);
         
     } catch (err) {
         console.error('Indexer error:', err.message);
-        await delay(5000); // Wait longer on error
+        await delay(2000); // Wait on error
     }
 }
 
@@ -679,7 +681,7 @@ async function indexNftOwnership() {
                             stmts.upsertOwnership.run(address, id, owner.toLowerCase());
                         }
                     }
-                    await delay(200);
+                    await delay(30);
                 }
                 continue;
             }
@@ -709,8 +711,8 @@ async function indexNftOwnership() {
                 // Update sync state
                 stmts.upsertOwnershipSync.run(address, end, end >= supply ? 1 : 0);
                 
-                // Rate limit
-                await delay(300);
+                // Fast with private node
+                await delay(50);
                 
                 // Log progress every 500 tokens
                 if (end % 500 === 0) {
