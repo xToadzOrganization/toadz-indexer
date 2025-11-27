@@ -386,6 +386,9 @@ async function indexEvents() {
                     
                     if (!collection || !seller || !buyer) continue; // Skip invalid events
                     
+                    // Update ownership - buyer now owns the NFT
+                    stmts.upsertOwnership.run(collection.toLowerCase(), tokenId, buyer.toLowerCase());
+                    
                     const result = stmts.insertEvent.run(
                         e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
                         'sold', collection, tokenId, seller, buyer, price, '0'
@@ -480,10 +483,17 @@ async function indexEvents() {
             for (const e of unlistedEvents) {
                 try {
                     if (!e.args.nftContract || !e.args.seller) continue;
+                    
+                    const collection = e.args.nftContract;
+                    const tokenId = e.args.tokenId.toNumber();
+                    const seller = e.args.seller;
+                    
+                    // Update ownership - seller gets NFT back
+                    stmts.upsertOwnership.run(collection.toLowerCase(), tokenId, seller.toLowerCase());
+                    
                     stmts.insertEvent.run(
                         e.transactionHash, e.blockNumber, timestamps[e.blockNumber],
-                        'unlisted', e.args.nftContract, e.args.tokenId.toNumber(),
-                        e.args.seller, null, '0', '0'
+                        'unlisted', collection, tokenId, seller, null, '0', '0'
                     );
                 } catch (err) {
                     console.log(`Error processing unlisted event: ${err.message}`);
