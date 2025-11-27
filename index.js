@@ -35,7 +35,7 @@ const COLLECTIONS = {
     '0x34FF649D709ccCEc77bCf433317176fD13246296': { name: 'CYBRs', symbol: 'CYBR', supply: 20000 },
     '0x23A18A46c67301864f5b341e87f89B8Ccb690c44': { name: 'Super Bad Babies', symbol: 'SBB', supply: 3333 },
     '0xf4b4D366f9B4855690Bb7530abC76C857B259093': { name: 'Super Bad Genesis Seed', symbol: 'SBGS', supply: 666 },
-    '0xfF063937523c4514179A4d9a6769694bAab357A8': { name: '888 Inner Circle', symbol: '888IC', supply: 4086 },
+    '0xff063937523c4514179a4d9a6769694baab357a8': { name: '888 Inner Circle', symbol: '888IC', supply: 4086 },
     '0x4F52A074De9f2651d2f711FEe63FEe9E3b439A7e': { name: 'The Grungies', symbol: 'GRUNGIE', supply: 1990 },
     '0x927463265eDE6a52604D179d7110B7B2fc057a3f': { name: 'The Senators', symbol: 'SENATOR', supply: 350 },
     '0x7DC06eE0717c6f4905652f46f8F1891E8538e799': { name: 'Rare Pepe Club', symbol: 'RAREPEPE', supply: 9973 },
