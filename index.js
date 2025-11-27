@@ -263,7 +263,7 @@ async function indexEvents() {
         const currentBlock = await provider.getBlockNumber();
         
         // Only 10 blocks at a time for Songbird RPC limits
-        const toBlock = Math.min(fromBlock + 10, currentBlock);
+        const toBlock = Math.min(fromBlock + 500, currentBlock);
         
         if (fromBlock > currentBlock) {
             return; // Already synced
