@@ -693,7 +693,7 @@ async function indexNftOwnership() {
                     tokensToCheck.push(Math.floor(Math.random() * supply) + 1);
                 }
                 
-                const batchSize = 50;
+                const batchSize = 500;
                 for (let i = 0; i < tokensToCheck.length; i += batchSize) {
                     const batch = tokensToCheck.slice(i, i + batchSize);
                     const results = await Promise.all(
@@ -709,15 +709,15 @@ async function indexNftOwnership() {
                             stmts.upsertOwnership.run(address, id, owner.toLowerCase());
                         }
                     }
-                    await delay(30);
+                    await delay(5);
                 }
                 continue;
             }
             
             console.log(`${col.name}: Indexing from token ${startToken}...`);
             
-            // Index in batches
-            const batchSize = 50;
+            // Index in batches - FAST with private node
+            const batchSize = 500;
             for (let start = startToken; start <= supply; start += batchSize) {
                 const end = Math.min(start + batchSize - 1, supply);
                 const tokenIds = Array.from({ length: end - start + 1 }, (_, i) => start + i);
@@ -739,11 +739,11 @@ async function indexNftOwnership() {
                 // Update sync state
                 stmts.upsertOwnershipSync.run(address, end, end >= supply ? 1 : 0);
                 
-                // Fast with private node
-                await delay(50);
+                // Minimal delay - private node can handle it
+                await delay(5);
                 
-                // Log progress every 500 tokens
-                if (end % 500 === 0) {
+                // Log progress every 2000 tokens
+                if (end % 2000 === 0) {
                     console.log(`${col.name}: Indexed ${end}/${supply} tokens`);
                 }
             }
