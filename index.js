@@ -22,7 +22,26 @@ const CONTRACTS = {
 const COLLECTIONS = {
     '0x35afb6Ba51839dEDD33140A3b704b39933D1e642': { name: 'sToadz', symbol: 'STOADZ', supply: 10000 },
     '0x91Aa85a172DD3e7EEA4ad1A4B33E90cbF3B99ed8': { name: 'Luxury Lofts', symbol: 'LOFT', supply: 10000 },
-    '0x360f8B7d9530F55AB8E52394E6527935635f51E7': { name: 'Songbird City', symbol: 'SBCITY', supply: 10000 }
+    '0x360f8B7d9530F55AB8E52394E6527935635f51E7': { name: 'Songbird City', symbol: 'SBCITY', supply: 10000 },
+    '0x0e759aa7166ab3b2b81abd6d9ed16ac83368f97e': { name: 'The Fat Cats', symbol: 'FATCAT', supply: 1000 },
+    '0x12c40516c7bf32002FF0e3431082C9e28Ab76066': { name: 'The Fat Leopards', symbol: 'FATLEOPARD', supply: 3000 },
+    '0xFdD87A263ba929E14Dd0A2D879D9C66d5c8fF3ae': { name: 'Fat Tigers', symbol: 'FATTIGER', supply: 6000 },
+    '0xCdB019C0990c033724DA55f5A04bE6fd6ec1809d': { name: 'The Oracles', symbol: 'ORACLE', supply: 22222 },
+    '0xd167c20575c284dF75BCfe1794d54d3E057Cd4EC': { name: 'Sparkles Genesis', symbol: 'SPARKLE', supply: 9999 },
+    '0xd83Ae2C70916a2360e23683A0d3a3556b2c09935': { name: 'Songbird Punks', symbol: 'SBPUNK', supply: 20000 },
+    '0x279a222a18C033124Ab02290dDec97912A8b7185': { name: 'doodcats', symbol: 'DOODCAT', supply: 10000 },
+    '0x2972ea6e6CC45c5837CE909DeF032DD325B48415': { name: 'Bazooka Chicks', symbol: 'BAZOOKA', supply: 10000 },
+    '0x972edfF4D09a4fd8ABDe8e8f669B7e1E3B1f7e3D': { name: 'Grumpy Monkeys', symbol: 'GRUMPY', supply: 1000 },
+    '0x34FF649D709ccCEc77bCf433317176fD13246296': { name: 'CYBRs', symbol: 'CYBR', supply: 20000 },
+    '0x23A18A46c67301864f5b341e87f89B8Ccb690c44': { name: 'Super Bad Babies', symbol: 'SBB', supply: 3333 },
+    '0xf4b4D366f9B4855690Bb7530abC76C857B259093': { name: 'Super Bad Genesis Seed', symbol: 'SBGS', supply: 666 },
+    '0xfF063937523c4514179A4d9a6769694bAab357A8': { name: '888 Inner Circle', symbol: '888IC', supply: 4086 },
+    '0x4F52A074De9f2651d2f711FEe63FEe9E3b439A7e': { name: 'The Grungies', symbol: 'GRUNGIE', supply: 1990 },
+    '0x927463265eDE6a52604D179d7110B7B2fc057a3f': { name: 'The Senators', symbol: 'SENATOR', supply: 350 },
+    '0x7DC06eE0717c6f4905652f46f8F1891E8538e799': { name: 'Rare Pepe Club', symbol: 'RAREPEPE', supply: 9973 },
+    '0x2d086E61267A57503dd4aA1bB4E807bc50fa7Ee1': { name: 'SGB Whales', symbol: 'WHALE', supply: 2100 },
+    '0x3bE5Aa1Eccb73214481ee9eD9C74C9873070420a': { name: 'Pixel Plants', symbol: 'PLANT', supply: 1555 }
+};
 };
 
 // Event signatures
