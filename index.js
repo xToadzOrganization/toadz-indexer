@@ -281,7 +281,8 @@ async function indexEvents() {
         const currentBlock = await provider.getBlockNumber();
         
         // Only 10 blocks at a time for Songbird RPC limits
-        const toBlock = Math.min(fromBlock + 5000, currentBlock);
+        // MAX SPEED - 50k blocks at a time with private node
+        const toBlock = Math.min(fromBlock + 50000, currentBlock);
         
         if (fromBlock > currentBlock) {
             return; // Already synced
@@ -304,14 +305,12 @@ async function indexEvents() {
         } catch (err) {
             console.log(`  Listed query FAILED: ${err.message}`);
         }
-        await delay(100);
         
         try {
             unlistedEvents = await marketplace.queryFilter(marketplace.filters.Unlisted(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  Unlisted query FAILED: ${err.message}`);
         }
-        await delay(100);
         
         try {
             soldEvents = await marketplace.queryFilter(marketplace.filters.Sold(), fromBlock, toBlock);
@@ -319,28 +318,24 @@ async function indexEvents() {
         } catch (err) {
             console.log(`  Sold query FAILED: ${err.message}`);
         }
-        await delay(100);
         
         try {
             offerMadeEvents = await marketplace.queryFilter(marketplace.filters.OfferMade(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  OfferMade query FAILED: ${err.message}`);
         }
-        await delay(100);
         
         try {
             offerAcceptedEvents = await marketplace.queryFilter(marketplace.filters.OfferAccepted(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  OfferAccepted query FAILED: ${err.message}`);
         }
-        await delay(100);
         
         try {
             stakedEvents = await staking.queryFilter(staking.filters.Staked(), fromBlock, toBlock);
         } catch (err) {
             console.log(`  Staked query FAILED: ${err.message}`);
         }
-        await delay(100);
         
         try {
             rewardsClaimedEvents = await staking.queryFilter(staking.filters.RewardsClaimed(), fromBlock, toBlock);
@@ -581,8 +576,7 @@ async function indexEvents() {
             console.log(`Found ${totalEvents} events (${listedEvents.length} listed, ${soldEvents.length} sold, ${stakedEvents.length} staked, ${rewardsClaimedEvents.length} claimed)`);
         }
         
-        // Delay before next iteration - faster with private node
-        await delay(500);
+        // No delay - private node handles it
         
     } catch (err) {
         console.error('Indexer error:', err.message);
@@ -693,7 +687,7 @@ async function indexNftOwnership() {
                     tokensToCheck.push(Math.floor(Math.random() * supply) + 1);
                 }
                 
-                const batchSize = 500;
+                const batchSize = 10000;
                 for (let i = 0; i < tokensToCheck.length; i += batchSize) {
                     const batch = tokensToCheck.slice(i, i + batchSize);
                     const results = await Promise.all(
@@ -709,15 +703,14 @@ async function indexNftOwnership() {
                             stmts.upsertOwnership.run(address, id, owner.toLowerCase());
                         }
                     }
-                    await delay(5);
                 }
                 continue;
             }
             
             console.log(`${col.name}: Indexing from token ${startToken}...`);
             
-            // Index in batches - FAST with private node
-            const batchSize = 500;
+            // Index in batches - MAX SPEED with private node
+            const batchSize = 10000;
             for (let start = startToken; start <= supply; start += batchSize) {
                 const end = Math.min(start + batchSize - 1, supply);
                 const tokenIds = Array.from({ length: end - start + 1 }, (_, i) => start + i);
@@ -739,13 +732,8 @@ async function indexNftOwnership() {
                 // Update sync state
                 stmts.upsertOwnershipSync.run(address, end, end >= supply ? 1 : 0);
                 
-                // Minimal delay - private node can handle it
-                await delay(5);
-                
-                // Log progress every 2000 tokens
-                if (end % 2000 === 0) {
-                    console.log(`${col.name}: Indexed ${end}/${supply} tokens`);
-                }
+                // Log progress
+                console.log(`${col.name}: Indexed ${end}/${supply} tokens`);
             }
             
             console.log(`${col.name}: Ownership indexing complete!`);
