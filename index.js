@@ -42,7 +42,6 @@ const COLLECTIONS = {
     '0x2d086E61267A57503dd4aA1bB4E807bc50fa7Ee1': { name: 'SGB Whales', symbol: 'WHALE', supply: 2100 },
     '0x3bE5Aa1Eccb73214481ee9eD9C74C9873070420a': { name: 'Pixel Plants', symbol: 'PLANT', supply: 1555 }
 };
-};
 
 // Event signatures
 const EVENT_SIGS = {
