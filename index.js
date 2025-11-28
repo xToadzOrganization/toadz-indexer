@@ -1076,10 +1076,10 @@ app.listen(PORT, () => {
     indexEvents();
     updateFloors();
     
-    setTimeout(() => indexNftOwnership(), 5000);
+    // Removed: Initial ownership indexing - events now handle ownership updates (Sold, Unlisted, Unstaked)
     
     setInterval(indexEvents, POLL_INTERVAL);
     setInterval(notifyOfferSellers, 30000);
     setInterval(updateFloors, 300000);
-    setInterval(indexNftOwnership, 1800000);
+    // Removed: 30-min ownership reindex - events now handle ownership updates (Sold, Unlisted, Unstaked)
 });
