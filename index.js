@@ -213,7 +213,8 @@ const STAKING_ABI = [
 
 const ERC721_ABI = [
     'function ownerOf(uint256 tokenId) view returns (address)',
-    'function balanceOf(address owner) view returns (uint256)'
+    'function balanceOf(address owner) view returns (uint256)',
+    'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)'
 ];
 
 const marketplace = new ethers.Contract(CONTRACTS.marketplace, MARKETPLACE_ABI, provider);
@@ -1067,6 +1068,25 @@ app.get('/leaderboard/traders', (req, res) => {
 
 app.get('/leaderboard/lp', (req, res) => {
     res.json([]);
+});
+
+app.get('/admin/refresh-wallet/:address', async (req, res) => {
+    const wallet = req.params.address.toLowerCase();
+    let found = 0;
+    
+    for (const [address, col] of Object.entries(COLLECTIONS)) {
+        const contract = new ethers.Contract(address, ERC721_ABI, provider);
+        try {
+            const balance = await contract.balanceOf(wallet);
+            for (let i = 0; i < balance.toNumber(); i++) {
+                const tokenId = await contract.tokenOfOwnerByIndex(wallet, i);
+                stmts.upsertOwnership.run(address, tokenId.toNumber(), wallet);
+                found++;
+            }
+        } catch (e) {}
+    }
+    
+    res.json({ wallet, found });
 });
 
 // ==================== START ====================
