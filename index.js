@@ -1074,19 +1074,39 @@ app.get('/admin/refresh-wallet/:address', async (req, res) => {
     const wallet = req.params.address.toLowerCase();
     let found = 0;
     
-    for (const [address, col] of Object.entries(COLLECTIONS)) {
-        const contract = new ethers.Contract(address, ERC721_ABI, provider);
-        try {
-            const balance = await contract.balanceOf(wallet);
-            for (let i = 0; i < balance.toNumber(); i++) {
-                const tokenId = await contract.tokenOfOwnerByIndex(wallet, i);
-                stmts.upsertOwnership.run(address, tokenId.toNumber(), wallet);
-                found++;
-            }
-        } catch (e) {}
-    }
+    res.json({ wallet, status: 'started', message: 'Scanning in background, check back in a few minutes' });
     
-    res.json({ wallet, found });
+    // Run in background
+    (async () => {
+        for (const [address, col] of Object.entries(COLLECTIONS)) {
+            const contract = new ethers.Contract(address, ERC721_ABI, provider);
+            const supply = col.supply || 10000;
+            
+            // Check in batches of 100
+            for (let start = 1; start <= supply; start += 100) {
+                const end = Math.min(start + 99, supply);
+                const checks = [];
+                
+                for (let id = start; id <= end; id++) {
+                    checks.push(
+                        contract.ownerOf(id)
+                            .then(owner => ({ id, owner: owner.toLowerCase() }))
+                            .catch(() => null)
+                    );
+                }
+                
+                const results = await Promise.all(checks);
+                for (const r of results) {
+                    if (r && r.owner === wallet) {
+                        stmts.upsertOwnership.run(address, r.id, wallet);
+                        found++;
+                        console.log(`Found ${col.name} #${r.id} for ${wallet}`);
+                    }
+                }
+            }
+        }
+        console.log(`Refresh complete for ${wallet}: found ${found} NFTs`);
+    })();
 });
 
 // ==================== START ====================
