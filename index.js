@@ -158,6 +158,8 @@ db.exec(`
         name TEXT NOT NULL,
         bio TEXT,
         avatar TEXT,
+        avatar_type TEXT DEFAULT 'url',
+        avatar_emoji TEXT,
         banner TEXT,
         twitter TEXT,
         website TEXT,
@@ -1166,7 +1168,7 @@ app.get('/api/storefront/:wallet', (req, res) => {
 
 app.post('/api/storefront', (req, res) => {
     try {
-        const { wallet, name, bio, avatar, banner, twitter, website, txHash } = req.body;
+        const { wallet, name, bio, avatar, avatarType, avatarEmoji, banner, twitter, website, txHash } = req.body;
         
         if (!wallet || !name) {
             return res.status(400).json({ error: 'Wallet and name required' });
@@ -1190,11 +1192,11 @@ app.post('/api/storefront', (req, res) => {
         }
         
         const stmt = db.prepare(`
-            INSERT INTO storefronts (wallet, name, bio, avatar, banner, twitter, website)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO storefronts (wallet, name, bio, avatar, avatar_type, avatar_emoji, banner, twitter, website)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         
-        const result = stmt.run(wallet, name, bio || null, avatar || null, banner || null, twitter || null, website || null);
+        const result = stmt.run(wallet, name, bio || null, avatar || null, avatarType || 'url', avatarEmoji || null, banner || null, twitter || null, website || null);
         
         console.log(`New storefront: ${name} (${wallet}) ${isAdmin ? '[ADMIN]' : '[PAID]'}`);
         
@@ -1211,7 +1213,7 @@ app.post('/api/storefront', (req, res) => {
 
 app.put('/api/storefront/:wallet', (req, res) => {
     try {
-        const { name, bio, avatar, banner, twitter, website } = req.body;
+        const { name, bio, avatar, avatarType, avatarEmoji, banner, twitter, website } = req.body;
         const wallet = req.params.wallet;
         
         const existing = db.prepare('SELECT id FROM storefronts WHERE LOWER(wallet) = LOWER(?)').get(wallet);
@@ -1220,9 +1222,9 @@ app.put('/api/storefront/:wallet', (req, res) => {
         }
         
         db.prepare(`
-            UPDATE storefronts SET name = ?, bio = ?, avatar = ?, banner = ?, twitter = ?, website = ?
+            UPDATE storefronts SET name = ?, bio = ?, avatar = ?, avatar_type = ?, avatar_emoji = ?, banner = ?, twitter = ?, website = ?
             WHERE LOWER(wallet) = LOWER(?)
-        `).run(name, bio || null, avatar || null, banner || null, twitter || null, website || null, wallet);
+        `).run(name, bio || null, avatar || null, avatarType || 'url', avatarEmoji || null, banner || null, twitter || null, website || null, wallet);
         
         res.json({ success: true });
     } catch (err) {
