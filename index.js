@@ -163,6 +163,7 @@ db.exec(`
         banner TEXT,
         twitter TEXT,
         website TEXT,
+        verified INTEGER DEFAULT 0,
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
 `);
@@ -1242,6 +1243,22 @@ app.delete('/api/storefront/:wallet', (req, res) => {
         
         db.prepare('DELETE FROM storefronts WHERE LOWER(wallet) = LOWER(?)').run(req.params.wallet);
         res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Verify/unverify storefront (admin only)
+app.post('/api/storefront/:wallet/verify', (req, res) => {
+    try {
+        const requester = req.headers['x-wallet']?.toLowerCase();
+        if (requester !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Admin only' });
+        }
+        
+        const { verified } = req.body;
+        db.prepare('UPDATE storefronts SET verified = ? WHERE LOWER(wallet) = LOWER(?)').run(verified ? 1 : 0, req.params.wallet);
+        res.json({ success: true, verified: !!verified });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
