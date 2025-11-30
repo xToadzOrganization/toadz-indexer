@@ -151,6 +151,18 @@ db.exec(`
         status TEXT DEFAULT 'pending',
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
+    
+    CREATE TABLE IF NOT EXISTS storefronts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wallet TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        bio TEXT,
+        avatar TEXT,
+        banner TEXT,
+        twitter TEXT,
+        website TEXT,
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
 `);
 
 // Prepared statements
@@ -751,7 +763,10 @@ async function indexNftOwnership() {
 
 // ==================== API ====================
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: ['https://xtoadzorganization.github.io', 'http://localhost:3000', 'http://127.0.0.1:5500'],
+    credentials: true
+}));
 app.use(express.json());
 
 app.get('/', (req, res) => {
@@ -1121,6 +1136,113 @@ app.get('/admin/refresh-wallet/:address', async (req, res) => {
         }
         console.log(`Refresh complete for ${wallet}: found ${found} NFTs`);
     })();
+});
+
+// ==================== STOREFRONTS ====================
+const ADMIN_WALLET = '0xcEA86bBdb5cd33ddbA8dC0ed3c838605EeF7c715'.toLowerCase();
+const FEE_WALLET = '0xcEA86bBdb5cd33ddbA8dC0ed3c838605EeF7c715';
+const STOREFRONT_FEE = '10'; // 10 FLR
+
+app.get('/api/storefronts', (req, res) => {
+    try {
+        const storefronts = db.prepare('SELECT * FROM storefronts ORDER BY created_at DESC').all();
+        res.json(storefronts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/storefront/:wallet', (req, res) => {
+    try {
+        const storefront = db.prepare('SELECT * FROM storefronts WHERE LOWER(wallet) = LOWER(?)').get(req.params.wallet);
+        if (!storefront) {
+            return res.status(404).json({ error: 'Storefront not found' });
+        }
+        res.json(storefront);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/storefront', (req, res) => {
+    try {
+        const { wallet, name, bio, avatar, banner, twitter, website, txHash } = req.body;
+        
+        if (!wallet || !name) {
+            return res.status(400).json({ error: 'Wallet and name required' });
+        }
+        
+        // Check if admin (free) or needs payment verification
+        const isAdmin = wallet.toLowerCase() === ADMIN_WALLET;
+        
+        if (!isAdmin && !txHash) {
+            return res.status(400).json({ 
+                error: 'Payment required',
+                fee: STOREFRONT_FEE,
+                feeWallet: FEE_WALLET
+            });
+        }
+        
+        // Check if already exists
+        const existing = db.prepare('SELECT id FROM storefronts WHERE LOWER(wallet) = LOWER(?)').get(wallet);
+        if (existing) {
+            return res.status(400).json({ error: 'Storefront already exists for this wallet' });
+        }
+        
+        const stmt = db.prepare(`
+            INSERT INTO storefronts (wallet, name, bio, avatar, banner, twitter, website)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        
+        const result = stmt.run(wallet, name, bio || null, avatar || null, banner || null, twitter || null, website || null);
+        
+        console.log(`New storefront: ${name} (${wallet}) ${isAdmin ? '[ADMIN]' : '[PAID]'}`);
+        
+        res.json({ 
+            success: true, 
+            id: result.lastInsertRowid,
+            message: 'Storefront created'
+        });
+    } catch (err) {
+        console.error('Storefront error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/storefront/:wallet', (req, res) => {
+    try {
+        const { name, bio, avatar, banner, twitter, website } = req.body;
+        const wallet = req.params.wallet;
+        
+        const existing = db.prepare('SELECT id FROM storefronts WHERE LOWER(wallet) = LOWER(?)').get(wallet);
+        if (!existing) {
+            return res.status(404).json({ error: 'Storefront not found' });
+        }
+        
+        db.prepare(`
+            UPDATE storefronts SET name = ?, bio = ?, avatar = ?, banner = ?, twitter = ?, website = ?
+            WHERE LOWER(wallet) = LOWER(?)
+        `).run(name, bio || null, avatar || null, banner || null, twitter || null, website || null, wallet);
+        
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/storefront/:wallet', (req, res) => {
+    try {
+        // Only admin can delete
+        const requester = req.headers['x-wallet']?.toLowerCase();
+        if (requester !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Admin only' });
+        }
+        
+        db.prepare('DELETE FROM storefronts WHERE LOWER(wallet) = LOWER(?)').run(req.params.wallet);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ==================== ARTIST APPLICATIONS ====================
