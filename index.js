@@ -137,6 +137,20 @@ db.exec(`
     CREATE INDEX IF NOT EXISTS idx_events_to ON events(to_address);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_address, is_read);
     CREATE INDEX IF NOT EXISTS idx_nft_owner ON nft_ownership(owner);
+    
+    CREATE TABLE IF NOT EXISTS artist_applications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        portfolio TEXT,
+        twitter TEXT,
+        style TEXT,
+        collection_size TEXT,
+        bio TEXT,
+        wallet TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
 `);
 
 // Prepared statements
@@ -1107,6 +1121,44 @@ app.get('/admin/refresh-wallet/:address', async (req, res) => {
         }
         console.log(`Refresh complete for ${wallet}: found ${found} NFTs`);
     })();
+});
+
+// ==================== ARTIST APPLICATIONS ====================
+app.post('/api/artist-apply', (req, res) => {
+    try {
+        const { name, email, portfolio, twitter, style, size, bio, wallet } = req.body;
+        
+        if (!name || !email || !bio) {
+            return res.status(400).json({ error: 'Name, email, and bio are required' });
+        }
+        
+        const stmt = db.prepare(`
+            INSERT INTO artist_applications (name, email, portfolio, twitter, style, collection_size, bio, wallet)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        
+        const result = stmt.run(name, email, portfolio || null, twitter || null, style || null, size || null, bio, wallet || null);
+        
+        console.log(`New artist application: ${name} (${email})`);
+        
+        res.json({ 
+            success: true, 
+            message: 'Application submitted successfully',
+            id: result.lastInsertRowid 
+        });
+    } catch (err) {
+        console.error('Artist application error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/artist-applications', (req, res) => {
+    try {
+        const applications = db.prepare('SELECT * FROM artist_applications ORDER BY created_at DESC').all();
+        res.json(applications);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ==================== START ====================
