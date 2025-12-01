@@ -4,17 +4,12 @@ const cors = require('cors');
 const { ethers } = require('ethers');
 const Database = require('better-sqlite3');
 const multer = require('multer');
-const fetch = require('node-fetch');
-const FormData = require('form-data');
 
-// File upload config - store in memory for IPFS upload
+// File upload config - store in memory then save to disk
 const upload = multer({ 
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024 } // 50MB max for videos
 });
-
-// NFT.Storage API key (free tier)
-const NFT_STORAGE_KEY = process.env.NFT_STORAGE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkaWQ6ZXRocjoweGNFQTg2YkJkYjVjZDMzZGRiQThkQzBlZDNjODM4NjA1RWVGN2M3MTUiLCJpc3MiOiJuZnQtc3RvcmFnZSIsImlhdCI6MTcwMTM4MDgwMDAwMCwibmFtZSI6InRvYWR6In0.placeholder';
 
 // ==================== CONFIG ====================
 const PORT = process.env.PORT || 8080;
@@ -1292,54 +1287,55 @@ app.post('/api/storefront/:wallet/verify', (req, res) => {
     }
 });
 
-// ==================== IMAGE UPLOAD ====================
-// Upload image to IPFS via NFT.Storage
+// ==================== FILE UPLOAD ====================
+// Store files locally - served from /uploads
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
+// Create uploads directory
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+// Serve uploaded files
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Upload image/video - stores locally
 app.post('/api/upload-image', upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
-            return res.status(400).json({ error: 'No image file provided' });
+            return res.status(400).json({ error: 'No file provided' });
         }
         
-        console.log('Uploading image:', req.file.originalname, req.file.size, 'bytes');
+        console.log('Uploading file:', req.file.originalname, req.file.size, 'bytes');
         
-        // Upload to NFT.Storage
-        const formData = new FormData();
-        formData.append('file', req.file.buffer, {
-            filename: req.file.originalname,
-            contentType: req.file.mimetype
-        });
+        // Generate unique filename
+        const ext = path.extname(req.file.originalname) || '.bin';
+        const hash = crypto.createHash('md5').update(req.file.buffer).digest('hex');
+        const filename = `${hash}${ext}`;
+        const filepath = path.join(UPLOADS_DIR, filename);
         
-        const response = await fetch('https://api.nft.storage/upload', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${NFT_STORAGE_KEY}`
-            },
-            body: formData
-        });
+        // Save file
+        fs.writeFileSync(filepath, req.file.buffer);
         
-        if (!response.ok) {
-            const err = await response.text();
-            throw new Error(`NFT.Storage error: ${err}`);
-        }
+        // Build URL (uses Railway's public URL)
+        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
+            ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+            : `http://localhost:${PORT}`;
+        const fileUrl = `${baseUrl}/uploads/${filename}`;
         
-        const result = await response.json();
-        const cid = result.value?.cid;
-        
-        if (!cid) {
-            throw new Error('No CID returned from NFT.Storage');
-        }
-        
-        const ipfsUrl = `https://ipfs.io/ipfs/${cid}`;
-        console.log('Uploaded to IPFS:', ipfsUrl);
+        console.log('Saved file:', fileUrl);
         
         res.json({ 
             success: true, 
-            cid: cid,
-            url: ipfsUrl,
-            gateway: `https://nftstorage.link/ipfs/${cid}`
+            cid: hash,
+            url: fileUrl,
+            gateway: fileUrl
         });
     } catch (err) {
-        console.error('Image upload error:', err);
+        console.error('Upload error:', err);
         res.status(500).json({ error: err.message });
     }
 });
