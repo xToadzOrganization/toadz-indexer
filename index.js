@@ -221,9 +221,44 @@ try {
 
 // Migration: Add auction_id column to artist_nfts
 try {
+    db.exec(`ALTER TABLE storefronts ADD COLUMN announcement TEXT`);
+    console.log('Added announcement column to storefronts');
+} catch (e) { /* column already exists */ }
+
+try {
+    db.exec(`ALTER TABLE storefronts ADD COLUMN announcement_date INTEGER`);
+    console.log('Added announcement_date column to storefronts');
+} catch (e) { /* column already exists */ }
+
+try {
     db.exec(`ALTER TABLE artist_nfts ADD COLUMN auction_id TEXT`);
     console.log('Added auction_id column to artist_nfts');
 } catch (e) { /* column already exists */ }
+
+// Create offers table
+db.exec(`
+    CREATE TABLE IF NOT EXISTS offers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nft_id INTEGER NOT NULL,
+        wallet TEXT NOT NULL,
+        amount REAL NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    )
+`);
+
+// Create bids table for auction bid history
+db.exec(`
+    CREATE TABLE IF NOT EXISTS auction_bids (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nft_id INTEGER NOT NULL,
+        auction_id TEXT,
+        wallet TEXT NOT NULL,
+        amount REAL NOT NULL,
+        tx_hash TEXT,
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    )
+`);
 
 // Prepared statements
 const stmts = {
@@ -1427,6 +1462,92 @@ app.get('/api/nft/:id/auction', async (req, res) => {
             });
         }
         
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Submit offer for NFT
+app.post('/api/nft/:id/offer', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { wallet, amount } = req.body;
+        
+        if (!wallet || !amount) {
+            return res.status(400).json({ error: 'Wallet and amount required' });
+        }
+        
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(id);
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        db.prepare('INSERT INTO offers (nft_id, wallet, amount) VALUES (?, ?, ?)').run(id, wallet.toLowerCase(), amount);
+        
+        console.log(`Offer ${amount} FLR on NFT ${id} from ${wallet}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get offers for NFT
+app.get('/api/nft/:id/offers', (req, res) => {
+    try {
+        const offers = db.prepare('SELECT * FROM offers WHERE nft_id = ? ORDER BY amount DESC').all(req.params.id);
+        res.json(offers);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Record bid (called after successful blockchain bid)
+app.post('/api/nft/:id/bid', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { wallet, amount, txHash, auctionId } = req.body;
+        
+        if (!wallet || !amount) {
+            return res.status(400).json({ error: 'Wallet and amount required' });
+        }
+        
+        db.prepare('INSERT INTO auction_bids (nft_id, auction_id, wallet, amount, tx_hash) VALUES (?, ?, ?, ?, ?)')
+            .run(id, auctionId, wallet.toLowerCase(), amount, txHash);
+        
+        console.log(`Bid ${amount} FLR on NFT ${id} from ${wallet}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get recent activity (bids + sales) for live feed
+app.get('/api/live-activity', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+        
+        // Get recent bids
+        const bids = db.prepare(`
+            SELECT b.*, n.name as nft_name, n.image_url, s.name as artist_name
+            FROM auction_bids b
+            LEFT JOIN artist_nfts n ON b.nft_id = n.id
+            LEFT JOIN storefronts s ON LOWER(n.artist_wallet) = LOWER(s.wallet)
+            ORDER BY b.created_at DESC
+            LIMIT ?
+        `).all(limit);
+        
+        const activity = bids.map(b => ({
+            type: 'bid',
+            nft_id: b.nft_id,
+            nft_name: b.nft_name,
+            image_url: b.image_url,
+            artist_name: b.artist_name,
+            wallet: b.wallet,
+            amount: b.amount,
+            created_at: b.created_at
+        }));
+        
+        res.json(activity);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
