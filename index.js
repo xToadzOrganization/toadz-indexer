@@ -179,6 +179,8 @@ db.exec(`
         twitter TEXT,
         website TEXT,
         verified INTEGER DEFAULT 0,
+        announcement TEXT,
+        announcement_date INTEGER,
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
     
@@ -1898,6 +1900,37 @@ app.get('/api/artist-activity', (req, res) => {
         }));
         
         res.json(activity);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Post announcement
+app.post('/api/storefront/:wallet/announcement', (req, res) => {
+    try {
+        const { wallet: senderWallet, announcement } = req.body;
+        const targetWallet = req.params.wallet;
+        
+        // Verify sender is owner or admin
+        const ADMIN = '0xcEA86bBdb5cd33ddbA8dC0ed3c838605EeF7c715'.toLowerCase();
+        if (senderWallet?.toLowerCase() !== targetWallet.toLowerCase() && 
+            senderWallet?.toLowerCase() !== ADMIN) {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+        
+        if (!announcement || announcement.length > 500) {
+            return res.status(400).json({ error: 'Announcement required (max 500 chars)' });
+        }
+        
+        // Update storefront with announcement
+        db.prepare(`
+            UPDATE storefronts SET announcement = ?, announcement_date = ?
+            WHERE LOWER(wallet) = LOWER(?)
+        `).run(announcement, Date.now(), targetWallet);
+        
+        console.log(`Announcement posted for ${targetWallet}`);
+        
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
