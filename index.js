@@ -231,6 +231,11 @@ try {
 } catch (e) { /* column already exists */ }
 
 try {
+    db.exec(`ALTER TABLE storefronts ADD COLUMN tagline TEXT`);
+    console.log('Added tagline column to storefronts');
+} catch (e) { /* column already exists */ }
+
+try {
     db.exec(`ALTER TABLE artist_nfts ADD COLUMN auction_id TEXT`);
     console.log('Added auction_id column to artist_nfts');
 } catch (e) { /* column already exists */ }
@@ -1620,7 +1625,7 @@ app.post('/api/storefront', (req, res) => {
 
 app.put('/api/storefront/:wallet', (req, res) => {
     try {
-        const { name, bio, avatar, avatarType, avatarEmoji, banner, twitter, website } = req.body;
+        const { name, tagline, bio, avatar, avatarType, avatarEmoji, banner, twitter, website } = req.body;
         const wallet = req.params.wallet;
         
         const existing = db.prepare('SELECT id FROM storefronts WHERE LOWER(wallet) = LOWER(?)').get(wallet);
@@ -1629,9 +1634,9 @@ app.put('/api/storefront/:wallet', (req, res) => {
         }
         
         db.prepare(`
-            UPDATE storefronts SET name = ?, bio = ?, avatar = ?, avatar_type = ?, avatar_emoji = ?, banner = ?, twitter = ?, website = ?
+            UPDATE storefronts SET name = ?, tagline = ?, bio = ?, avatar = ?, avatar_type = ?, avatar_emoji = ?, banner = ?, twitter = ?, website = ?
             WHERE LOWER(wallet) = LOWER(?)
-        `).run(name, bio || null, avatar || null, avatarType || 'url', avatarEmoji || null, banner || null, twitter || null, website || null, wallet);
+        `).run(name, tagline || null, bio || null, avatar || null, avatarType || 'url', avatarEmoji || null, banner || null, twitter || null, website || null, wallet);
         
         res.json({ success: true });
     } catch (err) {
