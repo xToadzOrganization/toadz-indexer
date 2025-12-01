@@ -4,6 +4,9 @@ const cors = require('cors');
 const { ethers } = require('ethers');
 const Database = require('better-sqlite3');
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 
 // File upload config - store in memory then save to disk
 const upload = multer({ 
@@ -63,7 +66,6 @@ const EVENT_SIGS = {
 };
 
 // ==================== DATABASE ====================
-const fs = require('fs');
 const dbPath = fs.existsSync('/data') ? '/data/indexer.db' : './indexer.db';
 console.log(`Using database path: ${dbPath}`);
 
@@ -1289,9 +1291,6 @@ app.post('/api/storefront/:wallet/verify', (req, res) => {
 
 // ==================== FILE UPLOAD ====================
 // Store files locally - served from /uploads
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
 
 // Create uploads directory
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
