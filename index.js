@@ -1630,6 +1630,250 @@ app.get('/api/artist-applications', (req, res) => {
     }
 });
 
+// ==================== BULK OPERATIONS ====================
+
+// Bulk mint NFTs (multiple at once)
+app.post('/api/bulk-mint', async (req, res) => {
+    try {
+        const { artistWallet, nfts } = req.body;
+        // nfts = [{ imageUrl, name, description, fileType, price, saleType, auctionDuration, featured }, ...]
+        
+        if (!artistWallet || !nfts || !Array.isArray(nfts) || nfts.length === 0) {
+            return res.status(400).json({ error: 'artistWallet and nfts array required' });
+        }
+        
+        if (nfts.length > 20) {
+            return res.status(400).json({ error: 'Maximum 20 NFTs per batch' });
+        }
+        
+        if (!MINTER_PRIVATE_KEY || !TOADZ_ORIGINALS_ADDRESS) {
+            return res.status(500).json({ error: 'Minting not configured' });
+        }
+        
+        const provider = new ethers.JsonRpcProvider('https://flare-api.flare.network/ext/C/rpc');
+        const minterWallet = new ethers.Wallet(MINTER_PRIVATE_KEY, provider);
+        const contract = new ethers.Contract(TOADZ_ORIGINALS_ADDRESS, ORIGINALS_ABI, minterWallet);
+        
+        const results = [];
+        
+        for (const nft of nfts) {
+            try {
+                const metadataUrl = createMetadata(
+                    nft.name,
+                    nft.description || '',
+                    nft.imageUrl,
+                    artistWallet,
+                    nft.fileType || 'image'
+                );
+                
+                console.log(`Bulk minting: ${nft.name} for ${artistWallet}`);
+                
+                const tx = await contract.mint(artistWallet, metadataUrl);
+                const receipt = await tx.wait();
+                
+                // Get token ID from event
+                let tokenId = 'unknown';
+                for (const log of receipt.logs) {
+                    try {
+                        const parsed = contract.interface.parseLog(log);
+                        if (parsed && parsed.name === 'Transfer') {
+                            tokenId = parsed.args.tokenId.toString();
+                        }
+                    } catch (e) {}
+                }
+                
+                // Save to database
+                db.prepare(`
+                    INSERT INTO artist_nfts (token_id, contract_address, artist_wallet, name, description, image_url, metadata_url, price, sale_type, auction_duration, featured, tx_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(tokenId, TOADZ_ORIGINALS_ADDRESS, artistWallet, nft.name, nft.description || '', nft.imageUrl, metadataUrl, nft.price || 0, nft.saleType || 'fixed', nft.auctionDuration || 0, nft.featured ? 1 : 0, tx.hash);
+                
+                results.push({ success: true, name: nft.name, tokenId, txHash: tx.hash });
+            } catch (err) {
+                console.error(`Failed to mint ${nft.name}:`, err.message);
+                results.push({ success: false, name: nft.name, error: err.message });
+            }
+        }
+        
+        res.json({ results, successCount: results.filter(r => r.success).length, totalCount: nfts.length });
+        
+    } catch (err) {
+        console.error('Bulk mint error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Update NFT listing (price, sale type)
+app.put('/api/artist-nft/:id', (req, res) => {
+    try {
+        const { wallet, price, saleType, auctionDuration } = req.body;
+        const id = req.params.id;
+        
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(id);
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        if (nft.artist_wallet.toLowerCase() !== wallet?.toLowerCase() && wallet?.toLowerCase() !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+        
+        db.prepare(`
+            UPDATE artist_nfts SET price = ?, sale_type = ?, auction_duration = ?
+            WHERE id = ?
+        `).run(price || 0, saleType || 'fixed', auctionDuration || 0, id);
+        
+        console.log(`Updated NFT ${id}: price=${price}, saleType=${saleType}`);
+        
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Bulk list NFTs (update prices)
+app.post('/api/bulk-list', (req, res) => {
+    try {
+        const { wallet, listings } = req.body;
+        // listings = [{ id, price, saleType, auctionDuration }, ...]
+        
+        if (!wallet || !listings || !Array.isArray(listings)) {
+            return res.status(400).json({ error: 'wallet and listings array required' });
+        }
+        
+        const results = [];
+        
+        for (const listing of listings) {
+            const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(listing.id);
+            if (!nft) {
+                results.push({ id: listing.id, success: false, error: 'Not found' });
+                continue;
+            }
+            
+            if (nft.artist_wallet.toLowerCase() !== wallet.toLowerCase() && wallet.toLowerCase() !== ADMIN_WALLET) {
+                results.push({ id: listing.id, success: false, error: 'Not authorized' });
+                continue;
+            }
+            
+            db.prepare(`
+                UPDATE artist_nfts SET price = ?, sale_type = ?, auction_duration = ?
+                WHERE id = ?
+            `).run(listing.price || 0, listing.saleType || 'fixed', listing.auctionDuration || 0, listing.id);
+            
+            results.push({ id: listing.id, success: true });
+        }
+        
+        console.log(`Bulk listed ${results.filter(r => r.success).length}/${listings.length} NFTs`);
+        
+        res.json({ results, successCount: results.filter(r => r.success).length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Place bid on auction
+app.post('/api/place-bid', (req, res) => {
+    try {
+        const { nftId, bidder, amount, txHash } = req.body;
+        
+        if (!nftId || !bidder || !amount || !txHash) {
+            return res.status(400).json({ error: 'nftId, bidder, amount, and txHash required' });
+        }
+        
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(nftId);
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        if (nft.sale_type !== 'auction') {
+            return res.status(400).json({ error: 'NFT is not an auction' });
+        }
+        
+        // Update the NFT with new highest bid
+        db.prepare(`
+            UPDATE artist_nfts SET price = ?, status = 'has_bids'
+            WHERE id = ? AND (price < ? OR price IS NULL OR price = 0)
+        `).run(amount, nftId, amount);
+        
+        // Store bid in bids table (create if not exists)
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS auction_bids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nft_id INTEGER NOT NULL,
+                bidder TEXT NOT NULL,
+                amount REAL NOT NULL,
+                tx_hash TEXT,
+                created_at INTEGER DEFAULT (strftime('%s', 'now'))
+            )
+        `);
+        
+        db.prepare(`
+            INSERT INTO auction_bids (nft_id, bidder, amount, tx_hash)
+            VALUES (?, ?, ?, ?)
+        `).run(nftId, bidder.toLowerCase(), amount, txHash);
+        
+        console.log(`Bid placed: ${amount} FLR on NFT ${nftId} by ${bidder}`);
+        
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get bids for an NFT
+app.get('/api/nft/:id/bids', (req, res) => {
+    try {
+        // Create table if not exists
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS auction_bids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nft_id INTEGER NOT NULL,
+                bidder TEXT NOT NULL,
+                amount REAL NOT NULL,
+                tx_hash TEXT,
+                created_at INTEGER DEFAULT (strftime('%s', 'now'))
+            )
+        `);
+        
+        const bids = db.prepare('SELECT * FROM auction_bids WHERE nft_id = ? ORDER BY amount DESC').all(req.params.id);
+        res.json(bids);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Buy NFT (fixed price)
+app.post('/api/buy-nft', (req, res) => {
+    try {
+        const { nftId, buyer, txHash } = req.body;
+        
+        if (!nftId || !buyer || !txHash) {
+            return res.status(400).json({ error: 'nftId, buyer, and txHash required' });
+        }
+        
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(nftId);
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        if (nft.sale_type !== 'fixed') {
+            return res.status(400).json({ error: 'NFT is not a fixed price listing' });
+        }
+        
+        // Mark as sold
+        db.prepare(`
+            UPDATE artist_nfts SET status = 'sold', price = 0
+            WHERE id = ?
+        `).run(nftId);
+        
+        console.log(`NFT ${nftId} sold to ${buyer} for ${nft.price} FLR`);
+        
+        res.json({ success: true, price: nft.price });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ==================== START ====================
 app.listen(PORT, () => {
     console.log(`Toadz Indexer running on port ${PORT}`);
