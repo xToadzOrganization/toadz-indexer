@@ -1586,7 +1586,8 @@ const MAX_GAS_FLR = 0.5; // Max gas cost in FLR
 // ToadzOriginals ABI (just the mint function)
 const ORIGINALS_ABI = [
     "function mint(address artist, string memory uri) external returns (uint256)",
-    "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
+    "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+    "event NFTMinted(uint256 indexed tokenId, address indexed artist, string uri)"
 ];
 
 // Create metadata JSON and save it
@@ -1636,8 +1637,9 @@ app.post('/api/mint-nft', async (req, res) => {
         const metadataUrl = createMetadata(name, description, imageUrl, artistWallet, fileType);
         console.log('Metadata URL:', metadataUrl);
         
-        // Connect to Songbird
-        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        // Connect to Flare mainnet
+        const FLARE_RPC = 'https://flare-api.flare.network/ext/C/rpc';
+        const provider = new ethers.providers.JsonRpcProvider(FLARE_RPC);
         const minterWallet = new ethers.Wallet(MINTER_PRIVATE_KEY, provider);
         
         // Check gas price
@@ -1669,31 +1671,29 @@ app.post('/api/mint-nft', async (req, res) => {
         const receipt = await tx.wait();
         console.log('Mint confirmed in block:', receipt.blockNumber);
         
-        // Query ALL Transfer events from this contract in this block
+        // Wait a moment for logs to be indexed
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Query logs for this transaction
         let tokenId = null;
+        const transferSig = ethers.utils.id('Transfer(address,address,uint256)');
         
         try {
-            const filter = {
-                address: TOADZ_ORIGINALS_ADDRESS,
-                topics: [ethers.utils.id('Transfer(address,address,uint256)')],
-                fromBlock: receipt.blockNumber,
-                toBlock: receipt.blockNumber
-            };
+            const fullReceipt = await provider.getTransactionReceipt(tx.hash);
+            console.log('Receipt logs count:', fullReceipt.logs.length);
             
-            const logs = await provider.getLogs(filter);
-            console.log('Transfer logs found:', logs.length);
-            
-            for (const log of logs) {
-                console.log('Log topics:', log.topics);
-                // tokenId is topics[3] (third indexed param)
-                if (log.topics.length >= 4) {
-                    tokenId = ethers.BigNumber.from(log.topics[3]).toString();
-                    console.log('Got tokenId:', tokenId);
-                    break;
+            for (const log of fullReceipt.logs) {
+                if (log.address.toLowerCase() === TOADZ_ORIGINALS_ADDRESS.toLowerCase()) {
+                    console.log('Found NFT contract log, topics:', log.topics);
+                    if (log.topics[0] === transferSig && log.topics.length >= 4) {
+                        tokenId = ethers.BigNumber.from(log.topics[3]).toString();
+                        console.log('Got tokenId:', tokenId);
+                        break;
+                    }
                 }
             }
         } catch (e) {
-            console.log('getLogs failed:', e.message);
+            console.log('getTransactionReceipt error:', e.message);
         }
         
         if (!tokenId) {
