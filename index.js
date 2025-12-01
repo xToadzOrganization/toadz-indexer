@@ -1710,10 +1710,59 @@ app.post('/api/mint-nft', async (req, res) => {
         
         const nftId = insertResult.lastInsertRowid;
         
+        // If auction type and we got a valid tokenId, create auction on-chain
+        let auctionId = null;
+        if (saleType === 'auction' && tokenId && tokenId !== 'unknown') {
+            try {
+                const AUCTIONS_ADDRESS = '0x45b20e28fFAFAF70681f4e67990Ae1B44E3d37fd';
+                const AUCTIONS_ABI = [
+                    'function createAuction(uint256 nftId, address artist, uint256 startingPrice, uint256 durationHours) external returns (uint256)',
+                    'event AuctionCreated(uint256 indexed auctionId, uint256 indexed nftId, address artist, uint256 startingPrice, uint256 endTime)'
+                ];
+                
+                const auctionContract = new ethers.Contract(AUCTIONS_ADDRESS, AUCTIONS_ABI, minterWallet);
+                
+                const durationHours = Math.ceil((auctionDuration || 86400) / 3600);
+                const startingPriceWei = ethers.utils.parseEther(String(price || 1));
+                
+                console.log(`Creating auction for token ${tokenId}, price ${price} FLR, duration ${durationHours}h`);
+                
+                const auctionTx = await auctionContract.createAuction(
+                    tokenId,
+                    artistWallet,
+                    startingPriceWei,
+                    durationHours,
+                    { gasLimit: 200000 }
+                );
+                
+                const auctionReceipt = await auctionTx.wait();
+                console.log('Auction tx confirmed:', auctionTx.hash);
+                
+                // Get auction ID from event
+                const auctionCreatedSig = ethers.utils.id('AuctionCreated(uint256,uint256,address,uint256,uint256)');
+                for (const log of auctionReceipt.logs) {
+                    if (log.topics[0] === auctionCreatedSig) {
+                        auctionId = ethers.BigNumber.from(log.topics[1]).toString();
+                        console.log('Auction ID:', auctionId);
+                        break;
+                    }
+                }
+                
+                // Update database with auction_id
+                if (auctionId) {
+                    db.prepare('UPDATE artist_nfts SET auction_id = ? WHERE id = ?').run(auctionId, nftId);
+                }
+            } catch (auctionErr) {
+                console.error('Auction creation failed:', auctionErr.message);
+                // NFT still minted, just no auction
+            }
+        }
+        
         res.json({
             success: true,
             tokenId: tokenId,
             nftId: nftId,
+            auctionId: auctionId,
             txHash: tx.hash,
             metadataUrl: metadataUrl,
             contract: TOADZ_ORIGINALS_ADDRESS
@@ -1726,6 +1775,86 @@ app.post('/api/mint-nft', async (req, res) => {
 });
 
 // ==================== ARTIST APPLICATIONS ====================
+
+// Create auction for existing NFT
+app.post('/api/artist-nft/:id/create-auction', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const wallet = req.body.wallet?.toLowerCase();
+        
+        // Get NFT
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(id);
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        // Check ownership
+        if (nft.artist_wallet.toLowerCase() !== wallet && wallet !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+        
+        // Check if already has auction
+        if (nft.auction_id) {
+            return res.status(400).json({ error: 'Auction already exists' });
+        }
+        
+        // Check token ID
+        if (!nft.token_id || nft.token_id === 'unknown') {
+            return res.status(400).json({ error: 'NFT not minted on-chain' });
+        }
+        
+        const FLARE_RPC = 'https://flare-api.flare.network/ext/C/rpc';
+        const provider = new ethers.providers.JsonRpcProvider(FLARE_RPC);
+        const minterWallet = new ethers.Wallet(MINTER_PRIVATE_KEY, provider);
+        
+        const AUCTIONS_ADDRESS = '0x45b20e28fFAFAF70681f4e67990Ae1B44E3d37fd';
+        const AUCTIONS_ABI = [
+            'function createAuction(uint256 nftId, address artist, uint256 startingPrice, uint256 durationHours) external returns (uint256)',
+            'event AuctionCreated(uint256 indexed auctionId, uint256 indexed nftId, address artist, uint256 startingPrice, uint256 endTime)'
+        ];
+        
+        const auctionContract = new ethers.Contract(AUCTIONS_ADDRESS, AUCTIONS_ABI, minterWallet);
+        
+        const durationHours = Math.ceil((nft.auction_duration || 86400) / 3600);
+        const startingPriceWei = ethers.utils.parseEther(String(nft.price || 1));
+        
+        console.log(`Creating auction for token ${nft.token_id}, price ${nft.price} FLR, duration ${durationHours}h`);
+        
+        const auctionTx = await auctionContract.createAuction(
+            nft.token_id,
+            nft.artist_wallet,
+            startingPriceWei,
+            durationHours,
+            { gasLimit: 200000 }
+        );
+        
+        const auctionReceipt = await auctionTx.wait();
+        console.log('Auction tx confirmed:', auctionTx.hash);
+        
+        // Get auction ID from event
+        let auctionId = null;
+        const auctionCreatedSig = ethers.utils.id('AuctionCreated(uint256,uint256,address,uint256,uint256)');
+        for (const log of auctionReceipt.logs) {
+            if (log.topics[0] === auctionCreatedSig) {
+                auctionId = ethers.BigNumber.from(log.topics[1]).toString();
+                console.log('Auction ID:', auctionId);
+                break;
+            }
+        }
+        
+        // Update database
+        if (auctionId) {
+            db.prepare('UPDATE artist_nfts SET auction_id = ?, sale_type = ? WHERE id = ?').run(auctionId, 'auction', id);
+        }
+        
+        res.json({ success: true, auctionId, txHash: auctionTx.hash });
+        
+    } catch (err) {
+        console.error('Create auction error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/artist-apply', (req, res) => {
     try {
         const { name, email, portfolio, twitter, style, size, bio, wallet } = req.body;
