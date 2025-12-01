@@ -1586,9 +1586,6 @@ const MAX_GAS_FLR = 0.5; // Max gas cost in FLR
 // ToadzOriginals ABI (just the mint function)
 const ORIGINALS_ABI = [
     "function mint(address artist, string memory uri) external returns (uint256)",
-    "function totalSupply() external view returns (uint256)",
-    "function balanceOf(address owner) external view returns (uint256)",
-    "function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256)",
     "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
 ];
 
@@ -1660,6 +1657,15 @@ app.post('/api/mint-nft', async (req, res) => {
         // Connect to contract
         const contract = new ethers.Contract(TOADZ_ORIGINALS_ADDRESS, ORIGINALS_ABI, minterWallet);
         
+        // Get tokenId that will be minted using callStatic (simulates without executing)
+        let tokenId;
+        try {
+            tokenId = (await contract.callStatic.mint(artistWallet, metadataUrl)).toString();
+            console.log('Token ID from callStatic:', tokenId);
+        } catch (e) {
+            console.log('callStatic failed:', e.message);
+        }
+        
         // Mint NFT
         const tx = await contract.mint(artistWallet, metadataUrl, {
             gasLimit: 300000,
@@ -1672,24 +1678,9 @@ app.post('/api/mint-nft', async (req, res) => {
         const receipt = await tx.wait();
         console.log('Mint confirmed in block:', receipt.blockNumber);
         
-        // Get token ID by querying contract directly
-        let tokenId = null;
-        
-        try {
-            // Get artist's token balance and get last token
-            const balance = await contract.balanceOf(artistWallet);
-            console.log('Artist balance after mint:', balance.toString());
-            
-            if (balance.gt(0)) {
-                tokenId = (await contract.tokenOfOwnerByIndex(artistWallet, balance.sub(1))).toString();
-                console.log('Got tokenId from tokenOfOwnerByIndex:', tokenId);
-            }
-        } catch (e) {
-            console.log('tokenOfOwnerByIndex failed:', e.message);
-        }
-        
-        // Fallback: parse logs
+        // If callStatic failed, try other methods
         if (!tokenId) {
+            // Parse logs
             for (const log of receipt.logs) {
                 try {
                     const parsed = contract.interface.parseLog(log);
@@ -1705,7 +1696,6 @@ app.post('/api/mint-nft', async (req, res) => {
         }
         
         if (!tokenId) {
-            console.error('Could not determine token ID');
             tokenId = 'unknown';
         }
         
