@@ -219,6 +219,12 @@ try {
     console.log('Added verified column');
 } catch (e) { /* column already exists */ }
 
+// Migration: Add auction_id column to artist_nfts
+try {
+    db.exec(`ALTER TABLE artist_nfts ADD COLUMN auction_id TEXT`);
+    console.log('Added auction_id column to artist_nfts');
+} catch (e) { /* column already exists */ }
+
 // Prepared statements
 const stmts = {
     insertEvent: db.prepare(`
@@ -1332,6 +1338,66 @@ app.get('/api/artist-nft/:id', (req, res) => {
     }
 });
 
+// Get on-chain auction state for NFT
+app.get('/api/nft/:id/auction', async (req, res) => {
+    try {
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(req.params.id);
+        
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        // If no auction_id, not on-chain yet
+        if (!nft.auction_id) {
+            return res.json({
+                auctionId: null,
+                onChain: false,
+                message: 'No on-chain auction'
+            });
+        }
+        
+        // Query on-chain auction state
+        const TOADZ_AUCTIONS_ADDRESS = process.env.TOADZ_AUCTIONS_ADDRESS || '0x45b20e28fFAFAF70681f4e67990Ae1B44E3d37fd';
+        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        
+        const auctionABI = [
+            'function getAuction(uint256 auctionId) view returns (uint256 nftId, address artist, uint256 startingPrice, uint256 highestBid, address highestBidder, uint256 endTime, bool ended, bool cancelled)'
+        ];
+        
+        const auctionContract = new ethers.Contract(TOADZ_AUCTIONS_ADDRESS, auctionABI, provider);
+        
+        try {
+            const auction = await auctionContract.getAuction(nft.auction_id);
+            const now = Math.floor(Date.now() / 1000);
+            
+            res.json({
+                auctionId: nft.auction_id,
+                onChain: true,
+                contractAddress: TOADZ_AUCTIONS_ADDRESS,
+                nftId: nft.id.toString(),
+                artist: auction.artist,
+                startingPrice: ethers.utils.formatEther(auction.startingPrice),
+                highestBid: ethers.utils.formatEther(auction.highestBid),
+                highestBidder: auction.highestBidder,
+                endTime: auction.endTime.toNumber(),
+                ended: auction.ended,
+                cancelled: auction.cancelled,
+                timeRemaining: Math.max(0, auction.endTime.toNumber() - now)
+            });
+        } catch (contractErr) {
+            console.error('Contract call failed:', contractErr.message);
+            res.json({
+                auctionId: nft.auction_id,
+                onChain: false,
+                message: 'Failed to fetch on-chain state'
+            });
+        }
+        
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/storefront', (req, res) => {
     try {
         const { wallet, name, bio, avatar, avatarType, avatarEmoji, banner, twitter, website, txHash } = req.body;
@@ -1570,19 +1636,53 @@ app.post('/api/mint-nft', async (req, res) => {
         const receipt = await tx.wait();
         console.log('Mint confirmed in block:', receipt.blockNumber);
         
-        // Get token ID from event
-        const mintEvent = receipt.events?.find(e => e.event === 'NFTMinted');
-        const tokenId = mintEvent?.args?.tokenId?.toString() || 'unknown';
+        // Get token ID from event logs
+        let tokenId = null;
+        const mintEventSig = ethers.utils.id('NFTMinted(uint256,address,string)');
+        for (const log of receipt.logs) {
+            if (log.topics[0] === mintEventSig) {
+                // tokenId is first indexed param
+                tokenId = ethers.BigNumber.from(log.topics[1]).toString();
+                break;
+            }
+        }
+        
+        // Fallback: try to get from events array (older ethers style)
+        if (!tokenId && receipt.events) {
+            const mintEvent = receipt.events.find(e => e.event === 'NFTMinted');
+            tokenId = mintEvent?.args?.tokenId?.toString();
+        }
+        
+        // Last resort: query contract for latest token
+        if (!tokenId) {
+            try {
+                const totalSupply = await contract.totalSupply();
+                tokenId = totalSupply.toString();
+                console.log('Got tokenId from totalSupply:', tokenId);
+            } catch (e) {
+                console.log('Could not get totalSupply:', e.message);
+            }
+        }
+        
+        if (!tokenId) {
+            console.error('Could not determine token ID from mint tx');
+            tokenId = 'unknown';
+        }
+        
+        console.log('Minted token ID:', tokenId);
         
         // Store in database
-        db.prepare(`
+        const insertResult = db.prepare(`
             INSERT INTO artist_nfts (token_id, contract_address, artist_wallet, name, description, image_url, metadata_url, price, sale_type, auction_duration, featured, tx_hash)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(tokenId, TOADZ_ORIGINALS_ADDRESS, artistWallet, name, description || '', imageUrl, metadataUrl, price || 0, saleType || 'fixed', auctionDuration || 0, featured ? 1 : 0, tx.hash);
         
+        const nftId = insertResult.lastInsertRowid;
+        
         res.json({
             success: true,
             tokenId: tokenId,
+            nftId: nftId,
             txHash: tx.hash,
             metadataUrl: metadataUrl,
             contract: TOADZ_ORIGINALS_ADDRESS
