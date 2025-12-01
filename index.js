@@ -1587,6 +1587,8 @@ const MAX_GAS_FLR = 0.5; // Max gas cost in FLR
 const ORIGINALS_ABI = [
     "function mint(address artist, string memory uri) external returns (uint256)",
     "function totalSupply() external view returns (uint256)",
+    "function balanceOf(address owner) external view returns (uint256)",
+    "function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256)",
     "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
 ];
 
@@ -1669,56 +1671,41 @@ app.post('/api/mint-nft', async (req, res) => {
         // Wait for confirmation
         const receipt = await tx.wait();
         console.log('Mint confirmed in block:', receipt.blockNumber);
-        console.log('Receipt logs count:', receipt.logs.length);
         
-        // Get token ID from Transfer event
+        // Get token ID by querying contract directly
         let tokenId = null;
         
-        // Method 1: Parse using contract interface
-        for (const log of receipt.logs) {
-            try {
-                const parsed = contract.interface.parseLog(log);
-                console.log('Parsed log:', parsed.name, parsed.args);
-                if (parsed.name === 'Transfer') {
-                    tokenId = parsed.args.tokenId?.toString() || parsed.args[2]?.toString();
-                    if (tokenId) {
-                        console.log('Got tokenId from parsed log:', tokenId);
-                        break;
-                    }
-                }
-            } catch (e) {
-                // Not a log from our contract, skip
+        try {
+            // Get artist's token balance and get last token
+            const balance = await contract.balanceOf(artistWallet);
+            console.log('Artist balance after mint:', balance.toString());
+            
+            if (balance.gt(0)) {
+                tokenId = (await contract.tokenOfOwnerByIndex(artistWallet, balance.sub(1))).toString();
+                console.log('Got tokenId from tokenOfOwnerByIndex:', tokenId);
             }
+        } catch (e) {
+            console.log('tokenOfOwnerByIndex failed:', e.message);
         }
         
-        // Method 2: Manual topic parsing
+        // Fallback: parse logs
         if (!tokenId) {
-            const transferEventSig = ethers.utils.id('Transfer(address,address,uint256)');
             for (const log of receipt.logs) {
-                if (log.topics[0] === transferEventSig && log.topics.length >= 4) {
-                    tokenId = ethers.BigNumber.from(log.topics[3]).toString();
-                    console.log('Got tokenId from topics[3]:', tokenId);
-                    break;
-                }
-            }
-        }
-        
-        // Method 3: Check receipt.events (ethers v5 style)
-        if (!tokenId && receipt.events) {
-            for (const evt of receipt.events) {
-                if (evt.event === 'Transfer' && evt.args) {
-                    tokenId = evt.args.tokenId?.toString() || evt.args[2]?.toString();
-                    if (tokenId) {
-                        console.log('Got tokenId from receipt.events:', tokenId);
-                        break;
+                try {
+                    const parsed = contract.interface.parseLog(log);
+                    if (parsed.name === 'Transfer') {
+                        tokenId = parsed.args.tokenId?.toString() || parsed.args[2]?.toString();
+                        if (tokenId) {
+                            console.log('Got tokenId from parsed log:', tokenId);
+                            break;
+                        }
                     }
-                }
+                } catch (e) {}
             }
         }
         
         if (!tokenId) {
             console.error('Could not determine token ID');
-            console.log('Logs:', JSON.stringify(receipt.logs.map(l => ({ address: l.address, topics: l.topics, data: l.data })), null, 2));
             tokenId = 'unknown';
         }
         
