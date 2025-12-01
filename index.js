@@ -3,6 +3,18 @@ const express = require('express');
 const cors = require('cors');
 const { ethers } = require('ethers');
 const Database = require('better-sqlite3');
+const multer = require('multer');
+const fetch = require('node-fetch');
+const FormData = require('form-data');
+
+// File upload config - store in memory for IPFS upload
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
+});
+
+// NFT.Storage API key (free tier)
+const NFT_STORAGE_KEY = process.env.NFT_STORAGE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkaWQ6ZXRocjoweGNFQTg2YkJkYjVjZDMzZGRiQThkQzBlZDNjODM4NjA1RWVGN2M3MTUiLCJpc3MiOiJuZnQtc3RvcmFnZSIsImlhdCI6MTcwMTM4MDgwMDAwMCwibmFtZSI6InRvYWR6In0.placeholder';
 
 // ==================== CONFIG ====================
 const PORT = process.env.PORT || 8080;
@@ -167,6 +179,22 @@ db.exec(`
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
 `);
+
+// Migration: Add new columns to existing storefronts table if they don't exist
+try {
+    db.exec(`ALTER TABLE storefronts ADD COLUMN avatar_type TEXT DEFAULT 'url'`);
+    console.log('Added avatar_type column');
+} catch (e) { /* column already exists */ }
+
+try {
+    db.exec(`ALTER TABLE storefronts ADD COLUMN avatar_emoji TEXT`);
+    console.log('Added avatar_emoji column');
+} catch (e) { /* column already exists */ }
+
+try {
+    db.exec(`ALTER TABLE storefronts ADD COLUMN verified INTEGER DEFAULT 0`);
+    console.log('Added verified column');
+} catch (e) { /* column already exists */ }
 
 // Prepared statements
 const stmts = {
@@ -1260,6 +1288,58 @@ app.post('/api/storefront/:wallet/verify', (req, res) => {
         db.prepare('UPDATE storefronts SET verified = ? WHERE LOWER(wallet) = LOWER(?)').run(verified ? 1 : 0, req.params.wallet);
         res.json({ success: true, verified: !!verified });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==================== IMAGE UPLOAD ====================
+// Upload image to IPFS via NFT.Storage
+app.post('/api/upload-image', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file provided' });
+        }
+        
+        console.log('Uploading image:', req.file.originalname, req.file.size, 'bytes');
+        
+        // Upload to NFT.Storage
+        const formData = new FormData();
+        formData.append('file', req.file.buffer, {
+            filename: req.file.originalname,
+            contentType: req.file.mimetype
+        });
+        
+        const response = await fetch('https://api.nft.storage/upload', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${NFT_STORAGE_KEY}`
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`NFT.Storage error: ${err}`);
+        }
+        
+        const result = await response.json();
+        const cid = result.value?.cid;
+        
+        if (!cid) {
+            throw new Error('No CID returned from NFT.Storage');
+        }
+        
+        const ipfsUrl = `https://ipfs.io/ipfs/${cid}`;
+        console.log('Uploaded to IPFS:', ipfsUrl);
+        
+        res.json({ 
+            success: true, 
+            cid: cid,
+            url: ipfsUrl,
+            gateway: `https://nftstorage.link/ipfs/${cid}`
+        });
+    } catch (err) {
+        console.error('Image upload error:', err);
         res.status(500).json({ error: err.message });
     }
 });
