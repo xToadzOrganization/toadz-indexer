@@ -1252,6 +1252,79 @@ app.delete('/api/artist-nft/:id', (req, res) => {
     }
 });
 
+// Get featured NFTs for homepage
+app.get('/api/featured-nfts', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 10, 20);
+        const nfts = db.prepare(`
+            SELECT n.*, s.name as artist_name, s.avatar, s.avatar_type, s.avatar_emoji, s.verified
+            FROM artist_nfts n
+            LEFT JOIN storefronts s ON LOWER(n.artist_wallet) = LOWER(s.wallet)
+            WHERE n.featured = 1
+            ORDER BY n.created_at DESC
+            LIMIT ?
+        `).all(limit);
+        res.json(nfts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get live auctions
+app.get('/api/auctions', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 10, 20);
+        const nfts = db.prepare(`
+            SELECT n.*, s.name as artist_name, s.avatar, s.avatar_type, s.avatar_emoji, s.verified
+            FROM artist_nfts n
+            LEFT JOIN storefronts s ON LOWER(n.artist_wallet) = LOWER(s.wallet)
+            WHERE n.sale_type = 'auction'
+            ORDER BY n.created_at DESC
+            LIMIT ?
+        `).all(limit);
+        res.json(nfts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get all listed NFTs (for trending/explore)
+app.get('/api/listed-nfts', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+        const nfts = db.prepare(`
+            SELECT n.*, s.name as artist_name, s.avatar, s.avatar_type, s.avatar_emoji, s.verified
+            FROM artist_nfts n
+            LEFT JOIN storefronts s ON LOWER(n.artist_wallet) = LOWER(s.wallet)
+            WHERE n.price > 0
+            ORDER BY n.created_at DESC
+            LIMIT ?
+        `).all(limit);
+        res.json(nfts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get single NFT by ID
+app.get('/api/artist-nft/:id', (req, res) => {
+    try {
+        const nft = db.prepare(`
+            SELECT n.*, s.name as artist_name, s.avatar, s.avatar_type, s.avatar_emoji, s.verified, s.twitter, s.website
+            FROM artist_nfts n
+            LEFT JOIN storefronts s ON LOWER(n.artist_wallet) = LOWER(s.wallet)
+            WHERE n.id = ?
+        `).get(req.params.id);
+        
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        res.json(nft);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/storefront', (req, res) => {
     try {
         const { wallet, name, bio, avatar, avatarType, avatarEmoji, banner, twitter, website, txHash } = req.body;
