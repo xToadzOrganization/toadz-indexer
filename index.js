@@ -1227,6 +1227,31 @@ app.get('/api/storefront/:wallet/nfts', (req, res) => {
     }
 });
 
+// Delete artist NFT (owner only)
+app.delete('/api/artist-nft/:id', (req, res) => {
+    try {
+        const { wallet } = req.body;
+        const id = req.params.id;
+        
+        // Verify ownership
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(id);
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        if (nft.artist_wallet.toLowerCase() !== wallet?.toLowerCase() && wallet?.toLowerCase() !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+        
+        db.prepare('DELETE FROM artist_nfts WHERE id = ?').run(id);
+        console.log(`Deleted NFT ${id} by ${wallet}`);
+        
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/storefront', (req, res) => {
     try {
         const { wallet, name, bio, avatar, avatarType, avatarEmoji, banner, twitter, website, txHash } = req.body;
