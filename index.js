@@ -1669,17 +1669,13 @@ app.post('/api/mint-nft', async (req, res) => {
         const receipt = await tx.wait();
         console.log('Mint confirmed in block:', receipt.blockNumber);
         
-        // Query Transfer events from this block for our contract
+        // Query ALL Transfer events from this contract in this block
         let tokenId = null;
         
         try {
             const filter = {
                 address: TOADZ_ORIGINALS_ADDRESS,
-                topics: [
-                    ethers.utils.id('Transfer(address,address,uint256)'),
-                    ethers.utils.hexZeroPad('0x0000000000000000000000000000000000000000', 32), // from = 0x0 (mint)
-                    ethers.utils.hexZeroPad(artistWallet, 32) // to = artist
-                ],
+                topics: [ethers.utils.id('Transfer(address,address,uint256)')],
                 fromBlock: receipt.blockNumber,
                 toBlock: receipt.blockNumber
             };
@@ -1687,10 +1683,14 @@ app.post('/api/mint-nft', async (req, res) => {
             const logs = await provider.getLogs(filter);
             console.log('Transfer logs found:', logs.length);
             
-            if (logs.length > 0) {
-                // tokenId is the 3rd indexed param (topics[3])
-                tokenId = ethers.BigNumber.from(logs[0].topics[3]).toString();
-                console.log('Got tokenId from getLogs:', tokenId);
+            for (const log of logs) {
+                console.log('Log topics:', log.topics);
+                // tokenId is topics[3] (third indexed param)
+                if (log.topics.length >= 4) {
+                    tokenId = ethers.BigNumber.from(log.topics[3]).toString();
+                    console.log('Got tokenId:', tokenId);
+                    break;
+                }
             }
         } catch (e) {
             console.log('getLogs failed:', e.message);
