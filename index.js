@@ -1391,7 +1391,8 @@ app.get('/api/nft/:id/auction', async (req, res) => {
         
         // Query on-chain auction state
         const TOADZ_AUCTIONS_ADDRESS = process.env.TOADZ_AUCTIONS_ADDRESS || '0x45b20e28fFAFAF70681f4e67990Ae1B44E3d37fd';
-        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        const FLARE_RPC = 'https://flare-api.flare.network/ext/C/rpc';
+        const provider = new ethers.providers.JsonRpcProvider(FLARE_RPC);
         
         const auctionABI = [
             'function getAuction(uint256 auctionId) view returns (uint256 nftId, address artist, uint256 startingPrice, uint256 highestBid, address highestBidder, uint256 endTime, bool ended, bool cancelled)'
