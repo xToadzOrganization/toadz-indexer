@@ -1652,7 +1652,7 @@ app.post('/api/bulk-mint', async (req, res) => {
             return res.status(500).json({ error: 'Minting not configured' });
         }
         
-        const provider = new ethers.JsonRpcProvider('https://flare-api.flare.network/ext/C/rpc');
+        const provider = new ethers.providers.JsonRpcProvider('https://flare-api.flare.network/ext/C/rpc');
         const minterWallet = new ethers.Wallet(MINTER_PRIVATE_KEY, provider);
         const contract = new ethers.Contract(TOADZ_ORIGINALS_ADDRESS, ORIGINALS_ABI, minterWallet);
         
@@ -1673,15 +1673,11 @@ app.post('/api/bulk-mint', async (req, res) => {
                 const tx = await contract.mint(artistWallet, metadataUrl);
                 const receipt = await tx.wait();
                 
-                // Get token ID from event
+                // Get token ID from event (ethers v5 style)
                 let tokenId = 'unknown';
-                for (const log of receipt.logs) {
-                    try {
-                        const parsed = contract.interface.parseLog(log);
-                        if (parsed && parsed.name === 'Transfer') {
-                            tokenId = parsed.args.tokenId.toString();
-                        }
-                    } catch (e) {}
+                const mintEvent = receipt.events?.find(e => e.event === 'NFTMinted' || e.event === 'Transfer');
+                if (mintEvent?.args?.tokenId) {
+                    tokenId = mintEvent.args.tokenId.toString();
                 }
                 
                 // Save to database
