@@ -10,7 +10,7 @@ const FormData = require('form-data');
 // File upload config - store in memory for IPFS upload
 const upload = multer({ 
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB max for videos
 });
 
 // NFT.Storage API key (free tier)
