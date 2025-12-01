@@ -8,6 +8,12 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// Log env vars at startup
+console.log('=== ENV VARS CHECK ===');
+console.log('MINTER_PRIVATE_KEY:', process.env.MINTER_PRIVATE_KEY ? 'SET (' + process.env.MINTER_PRIVATE_KEY.slice(0,10) + '...)' : 'NOT SET');
+console.log('TOADZ_ORIGINALS_ADDRESS:', process.env.TOADZ_ORIGINALS_ADDRESS || 'NOT SET');
+console.log('======================');
+
 // File upload config - store in memory then save to disk
 const upload = multer({ 
     storage: multer.memoryStorage(),
@@ -1205,6 +1211,17 @@ app.get('/api/storefront/:wallet', (req, res) => {
             return res.status(404).json({ error: 'Storefront not found' });
         }
         res.json(storefront);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get artist's minted NFTs
+app.get('/api/storefront/:wallet/nfts', (req, res) => {
+    try {
+        const wallet = req.params.wallet.toLowerCase();
+        const nfts = db.prepare('SELECT * FROM artist_nfts WHERE LOWER(artist_wallet) = ? ORDER BY created_at DESC').all(wallet);
+        res.json(nfts);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
