@@ -1657,15 +1657,6 @@ app.post('/api/mint-nft', async (req, res) => {
         // Connect to contract
         const contract = new ethers.Contract(TOADZ_ORIGINALS_ADDRESS, ORIGINALS_ABI, minterWallet);
         
-        // Get tokenId that will be minted using callStatic (simulates without executing)
-        let tokenId;
-        try {
-            tokenId = (await contract.callStatic.mint(artistWallet, metadataUrl)).toString();
-            console.log('Token ID from callStatic:', tokenId);
-        } catch (e) {
-            console.log('callStatic failed:', e.message);
-        }
-        
         // Mint NFT
         const tx = await contract.mint(artistWallet, metadataUrl, {
             gasLimit: 300000,
@@ -1678,21 +1669,31 @@ app.post('/api/mint-nft', async (req, res) => {
         const receipt = await tx.wait();
         console.log('Mint confirmed in block:', receipt.blockNumber);
         
-        // If callStatic failed, try other methods
-        if (!tokenId) {
-            // Parse logs
-            for (const log of receipt.logs) {
-                try {
-                    const parsed = contract.interface.parseLog(log);
-                    if (parsed.name === 'Transfer') {
-                        tokenId = parsed.args.tokenId?.toString() || parsed.args[2]?.toString();
-                        if (tokenId) {
-                            console.log('Got tokenId from parsed log:', tokenId);
-                            break;
-                        }
-                    }
-                } catch (e) {}
+        // Query Transfer events from this block for our contract
+        let tokenId = null;
+        
+        try {
+            const filter = {
+                address: TOADZ_ORIGINALS_ADDRESS,
+                topics: [
+                    ethers.utils.id('Transfer(address,address,uint256)'),
+                    ethers.utils.hexZeroPad('0x0000000000000000000000000000000000000000', 32), // from = 0x0 (mint)
+                    ethers.utils.hexZeroPad(artistWallet, 32) // to = artist
+                ],
+                fromBlock: receipt.blockNumber,
+                toBlock: receipt.blockNumber
+            };
+            
+            const logs = await provider.getLogs(filter);
+            console.log('Transfer logs found:', logs.length);
+            
+            if (logs.length > 0) {
+                // tokenId is the 3rd indexed param (topics[3])
+                tokenId = ethers.BigNumber.from(logs[0].topics[3]).toString();
+                console.log('Got tokenId from getLogs:', tokenId);
             }
+        } catch (e) {
+            console.log('getLogs failed:', e.message);
         }
         
         if (!tokenId) {
