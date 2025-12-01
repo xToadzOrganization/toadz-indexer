@@ -12,7 +12,21 @@ const crypto = require('crypto');
 console.log('=== ENV VARS CHECK ===');
 console.log('MINTER_PRIVATE_KEY:', process.env.MINTER_PRIVATE_KEY ? 'SET (' + process.env.MINTER_PRIVATE_KEY.slice(0,10) + '...)' : 'NOT SET');
 console.log('TOADZ_ORIGINALS_ADDRESS:', process.env.TOADZ_ORIGINALS_ADDRESS || 'NOT SET');
+console.log('TOADZ_AUCTIONS_ADDRESS:', process.env.TOADZ_AUCTIONS_ADDRESS || 'NOT SET');
 console.log('======================');
+
+// Auction contract
+const TOADZ_AUCTIONS_ADDRESS = process.env.TOADZ_AUCTIONS_ADDRESS;
+const AUCTIONS_ABI = [
+    "function createAuction(uint256 nftId, address artist, uint256 startingPrice, uint256 durationHours) external returns (uint256)",
+    "function placeBid(uint256 auctionId) external payable",
+    "function endAuction(uint256 auctionId) external",
+    "function cancelAuction(uint256 auctionId) external",
+    "function getAuction(uint256 auctionId) view returns (uint256 nftId, address artist, uint256 startingPrice, uint256 highestBid, address highestBidder, uint256 endTime, bool ended, bool cancelled)",
+    "function getAuctionByNft(uint256 nftId) view returns (uint256)",
+    "function timeRemaining(uint256 auctionId) view returns (uint256)",
+    "function auctionCounter() view returns (uint256)"
+];
 
 // File upload config - store in memory then save to disk
 const upload = multer({ 
@@ -217,6 +231,11 @@ try {
 try {
     db.exec(`ALTER TABLE storefronts ADD COLUMN verified INTEGER DEFAULT 0`);
     console.log('Added verified column');
+} catch (e) { /* column already exists */ }
+
+try {
+    db.exec(`ALTER TABLE artist_nfts ADD COLUMN auction_id TEXT`);
+    console.log('Added auction_id column to artist_nfts');
 } catch (e) { /* column already exists */ }
 
 // Prepared statements
@@ -1681,10 +1700,34 @@ app.post('/api/bulk-mint', async (req, res) => {
                 }
                 
                 // Save to database
-                db.prepare(`
+                const result = db.prepare(`
                     INSERT INTO artist_nfts (token_id, contract_address, artist_wallet, name, description, image_url, metadata_url, price, sale_type, auction_duration, featured, tx_hash)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `).run(tokenId, TOADZ_ORIGINALS_ADDRESS, artistWallet, nft.name, nft.description || '', nft.imageUrl, metadataUrl, nft.price || 0, nft.saleType || 'fixed', nft.auctionDuration || 0, nft.featured ? 1 : 0, tx.hash);
+                
+                const dbId = result.lastInsertRowid;
+                
+                // Create on-chain auction if auction type
+                if (nft.saleType === 'auction' && TOADZ_AUCTIONS_ADDRESS) {
+                    try {
+                        const auctionContract = new ethers.Contract(TOADZ_AUCTIONS_ADDRESS, AUCTIONS_ABI, minterWallet);
+                        const startingPrice = ethers.utils.parseEther((nft.price || 100).toString());
+                        const durationHours = nft.auctionDuration || 168; // default 7 days
+                        
+                        const auctionTx = await auctionContract.createAuction(dbId, artistWallet, startingPrice, durationHours);
+                        const auctionReceipt = await auctionTx.wait();
+                        
+                        // Get auction ID from counter (it's the latest)
+                        const auctionId = await auctionContract.auctionCounter();
+                        
+                        // Update DB with auction ID
+                        db.prepare('UPDATE artist_nfts SET auction_id = ? WHERE id = ?').run(auctionId.toString(), dbId);
+                        
+                        console.log(`Created auction ${auctionId} for NFT ${dbId}`);
+                    } catch (auctionErr) {
+                        console.error(`Failed to create auction for ${nft.name}:`, auctionErr.message);
+                    }
+                }
                 
                 results.push({ success: true, name: nft.name, tokenId, txHash: tx.hash });
             } catch (err) {
@@ -1835,6 +1878,60 @@ app.get('/api/nft/:id/bids', (req, res) => {
         
         const bids = db.prepare('SELECT * FROM auction_bids WHERE nft_id = ? ORDER BY amount DESC').all(req.params.id);
         res.json(bids);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get auction contract address and info for frontend
+app.get('/api/auction-contract', (req, res) => {
+    res.json({
+        address: TOADZ_AUCTIONS_ADDRESS || null,
+        abi: AUCTIONS_ABI
+    });
+});
+
+// Get auction info for an NFT
+app.get('/api/nft/:id/auction', async (req, res) => {
+    try {
+        const nft = db.prepare('SELECT * FROM artist_nfts WHERE id = ?').get(req.params.id);
+        if (!nft) {
+            return res.status(404).json({ error: 'NFT not found' });
+        }
+        
+        if (nft.sale_type !== 'auction') {
+            return res.status(400).json({ error: 'NFT is not an auction' });
+        }
+        
+        if (!nft.auction_id || !TOADZ_AUCTIONS_ADDRESS) {
+            return res.json({ 
+                auctionId: null,
+                onChain: false,
+                message: 'No on-chain auction'
+            });
+        }
+        
+        // Get on-chain auction data
+        const provider = new ethers.providers.JsonRpcProvider('https://flare-api.flare.network/ext/C/rpc');
+        const auctionContract = new ethers.Contract(TOADZ_AUCTIONS_ADDRESS, AUCTIONS_ABI, provider);
+        
+        const auction = await auctionContract.getAuction(nft.auction_id);
+        const timeLeft = await auctionContract.timeRemaining(nft.auction_id);
+        
+        res.json({
+            auctionId: nft.auction_id,
+            onChain: true,
+            contractAddress: TOADZ_AUCTIONS_ADDRESS,
+            nftId: auction[0].toString(),
+            artist: auction[1],
+            startingPrice: ethers.utils.formatEther(auction[2]),
+            highestBid: ethers.utils.formatEther(auction[3]),
+            highestBidder: auction[4],
+            endTime: auction[5].toNumber(),
+            ended: auction[6],
+            cancelled: auction[7],
+            timeRemaining: timeLeft.toNumber()
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
