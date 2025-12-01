@@ -1369,6 +1369,25 @@ app.delete('/api/admin/clear-wallet-nfts/:wallet', (req, res) => {
     }
 });
 
+// Admin: Clear orphaned bids (bids without valid NFT)
+app.delete('/api/admin/cleanup-orphan-bids', (req, res) => {
+    try {
+        const wallet = req.headers['x-wallet']?.toLowerCase();
+        if (wallet !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Admin only' });
+        }
+        
+        const result = db.prepare(`
+            DELETE FROM auction_bids 
+            WHERE nft_id NOT IN (SELECT id FROM artist_nfts)
+        `).run();
+        console.log(`Deleted ${result.changes} orphaned bids`);
+        res.json({ success: true, deleted: result.changes });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get all listed NFTs (for trending/explore)
 app.get('/api/listed-nfts', (req, res) => {
     try {
@@ -1526,12 +1545,13 @@ app.get('/api/live-activity', (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 20, 50);
         
-        // Get recent bids
+        // Get recent bids - only include ones with valid NFT data
         const bids = db.prepare(`
             SELECT b.*, n.name as nft_name, n.image_url, s.name as artist_name
             FROM auction_bids b
-            LEFT JOIN artist_nfts n ON b.nft_id = n.id
+            INNER JOIN artist_nfts n ON b.nft_id = n.id
             LEFT JOIN storefronts s ON LOWER(n.artist_wallet) = LOWER(s.wallet)
+            WHERE n.image_url IS NOT NULL AND n.image_url != ''
             ORDER BY b.created_at DESC
             LIMIT ?
         `).all(limit);
@@ -1539,7 +1559,7 @@ app.get('/api/live-activity', (req, res) => {
         const activity = bids.map(b => ({
             type: 'bid',
             nft_id: b.nft_id,
-            nft_name: b.nft_name,
+            nft_name: b.nft_name || 'NFT',
             image_url: b.image_url,
             artist_name: b.artist_name,
             wallet: b.wallet,
