@@ -1301,6 +1301,39 @@ app.get('/api/auctions', (req, res) => {
     }
 });
 
+// Admin: Delete all broken NFTs (token_id = unknown)
+app.delete('/api/admin/cleanup-broken-nfts', (req, res) => {
+    try {
+        const wallet = req.headers['x-wallet']?.toLowerCase();
+        if (wallet !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Admin only' });
+        }
+        
+        const result = db.prepare("DELETE FROM artist_nfts WHERE token_id = 'unknown' OR token_id IS NULL").run();
+        console.log(`Deleted ${result.changes} broken NFTs`);
+        res.json({ success: true, deleted: result.changes });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: Delete all NFTs for a wallet
+app.delete('/api/admin/clear-wallet-nfts/:wallet', (req, res) => {
+    try {
+        const adminWallet = req.headers['x-wallet']?.toLowerCase();
+        if (adminWallet !== ADMIN_WALLET) {
+            return res.status(403).json({ error: 'Admin only' });
+        }
+        
+        const targetWallet = req.params.wallet.toLowerCase();
+        const result = db.prepare('DELETE FROM artist_nfts WHERE LOWER(artist_wallet) = ?').run(targetWallet);
+        console.log(`Deleted ${result.changes} NFTs for wallet ${targetWallet}`);
+        res.json({ success: true, deleted: result.changes });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Get all listed NFTs (for trending/explore)
 app.get('/api/listed-nfts', (req, res) => {
     try {
@@ -1636,21 +1669,26 @@ app.post('/api/mint-nft', async (req, res) => {
         const receipt = await tx.wait();
         console.log('Mint confirmed in block:', receipt.blockNumber);
         
-        // Get token ID from event logs
+        // Get token ID from Transfer event (standard ERC721)
         let tokenId = null;
-        const mintEventSig = ethers.utils.id('NFTMinted(uint256,address,string)');
+        const transferEventSig = ethers.utils.id('Transfer(address,address,uint256)');
+        
         for (const log of receipt.logs) {
-            if (log.topics[0] === mintEventSig) {
-                // tokenId is first indexed param
-                tokenId = ethers.BigNumber.from(log.topics[1]).toString();
+            if (log.topics[0] === transferEventSig && log.address.toLowerCase() === TOADZ_ORIGINALS_ADDRESS.toLowerCase()) {
+                // tokenId is the 3rd topic (index 2) in Transfer event
+                tokenId = ethers.BigNumber.from(log.topics[3]).toString();
+                console.log('Got tokenId from Transfer event:', tokenId);
                 break;
             }
         }
         
-        // Fallback: try to get from events array (older ethers style)
+        // Fallback: try parsed events
         if (!tokenId && receipt.events) {
-            const mintEvent = receipt.events.find(e => e.event === 'NFTMinted');
-            tokenId = mintEvent?.args?.tokenId?.toString();
+            const transferEvent = receipt.events.find(e => e.event === 'Transfer');
+            if (transferEvent?.args?.tokenId) {
+                tokenId = transferEvent.args.tokenId.toString();
+                console.log('Got tokenId from parsed Transfer event:', tokenId);
+            }
         }
         
         // Last resort: query contract for latest token
@@ -1669,7 +1707,7 @@ app.post('/api/mint-nft', async (req, res) => {
             tokenId = 'unknown';
         }
         
-        console.log('Minted token ID:', tokenId);
+        console.log('Final minted token ID:', tokenId);
         
         // Store in database
         const insertResult = db.prepare(`
