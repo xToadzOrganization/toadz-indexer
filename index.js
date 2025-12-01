@@ -175,6 +175,24 @@ db.exec(`
         verified INTEGER DEFAULT 0,
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
+    
+    CREATE TABLE IF NOT EXISTS artist_nfts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_id TEXT,
+        contract_address TEXT,
+        artist_wallet TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        image_url TEXT,
+        metadata_url TEXT,
+        price REAL DEFAULT 0,
+        sale_type TEXT DEFAULT 'fixed',
+        auction_duration INTEGER DEFAULT 0,
+        featured INTEGER DEFAULT 0,
+        tx_hash TEXT,
+        status TEXT DEFAULT 'minted',
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
 `);
 
 // Migration: Add new columns to existing storefronts table if they don't exist
@@ -1335,6 +1353,121 @@ app.post('/api/upload-image', upload.single('image'), async (req, res) => {
         });
     } catch (err) {
         console.error('Upload error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==================== NFT MINTING ====================
+const MINTER_PRIVATE_KEY = process.env.MINTER_PRIVATE_KEY;
+const TOADZ_ORIGINALS_ADDRESS = process.env.TOADZ_ORIGINALS_ADDRESS;
+const MAX_GAS_FLR = 0.5; // Max gas cost in FLR
+
+// ToadzOriginals ABI (just the mint function)
+const ORIGINALS_ABI = [
+    "function mint(address artist, string memory uri) external returns (uint256)",
+    "function totalSupply() external view returns (uint256)"
+];
+
+// Create metadata JSON and save it
+function createMetadata(name, description, imageUrl, artistWallet, fileType) {
+    const metadata = {
+        name: name,
+        description: description || '',
+        image: imageUrl,
+        animation_url: fileType === 'video' ? imageUrl : undefined,
+        attributes: [
+            { trait_type: "Artist", value: artistWallet },
+            { trait_type: "Platform", value: "TOADZ" },
+            { trait_type: "Type", value: fileType === 'video' ? 'Animated' : 'Static' }
+        ],
+        created_at: new Date().toISOString()
+    };
+    
+    // Save metadata file
+    const metaHash = crypto.createHash('md5').update(JSON.stringify(metadata)).digest('hex');
+    const metaFilename = `${metaHash}.json`;
+    const metaPath = path.join(UPLOADS_DIR, metaFilename);
+    fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2));
+    
+    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
+        ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+        : `http://localhost:${PORT}`;
+    
+    return `${baseUrl}/uploads/${metaFilename}`;
+}
+
+// Mint NFT endpoint
+app.post('/api/mint-nft', async (req, res) => {
+    try {
+        const { artistWallet, name, description, imageUrl, fileType, price, saleType, auctionDuration, featured } = req.body;
+        
+        if (!artistWallet || !name || !imageUrl) {
+            return res.status(400).json({ error: 'Missing required fields: artistWallet, name, imageUrl' });
+        }
+        
+        if (!MINTER_PRIVATE_KEY || !TOADZ_ORIGINALS_ADDRESS) {
+            return res.status(500).json({ error: 'Minting not configured - missing MINTER_PRIVATE_KEY or TOADZ_ORIGINALS_ADDRESS' });
+        }
+        
+        console.log(`Minting NFT for ${artistWallet}: ${name}`);
+        
+        // Create metadata
+        const metadataUrl = createMetadata(name, description, imageUrl, artistWallet, fileType);
+        console.log('Metadata URL:', metadataUrl);
+        
+        // Connect to Songbird
+        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        const minterWallet = new ethers.Wallet(MINTER_PRIVATE_KEY, provider);
+        
+        // Check gas price
+        const gasPrice = await provider.getGasPrice();
+        const estimatedGas = 200000; // Rough estimate for mint
+        const estimatedCostWei = gasPrice.mul(estimatedGas);
+        const estimatedCostFLR = parseFloat(ethers.utils.formatEther(estimatedCostWei));
+        
+        console.log(`Estimated gas cost: ${estimatedCostFLR} FLR`);
+        
+        if (estimatedCostFLR > MAX_GAS_FLR) {
+            return res.status(400).json({ 
+                error: `Gas too high: ${estimatedCostFLR.toFixed(4)} FLR (max ${MAX_GAS_FLR} FLR)` 
+            });
+        }
+        
+        // Connect to contract
+        const contract = new ethers.Contract(TOADZ_ORIGINALS_ADDRESS, ORIGINALS_ABI, minterWallet);
+        
+        // Mint NFT
+        const tx = await contract.mint(artistWallet, metadataUrl, {
+            gasLimit: 300000,
+            gasPrice: gasPrice
+        });
+        
+        console.log('Mint tx sent:', tx.hash);
+        
+        // Wait for confirmation
+        const receipt = await tx.wait();
+        console.log('Mint confirmed in block:', receipt.blockNumber);
+        
+        // Get token ID from event
+        const mintEvent = receipt.events?.find(e => e.event === 'NFTMinted');
+        const tokenId = mintEvent?.args?.tokenId?.toString() || 'unknown';
+        
+        // Store in database
+        db.prepare(`
+            INSERT INTO artist_nfts (token_id, contract_address, artist_wallet, name, description, image_url, metadata_url, price, sale_type, auction_duration, featured, tx_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(tokenId, TOADZ_ORIGINALS_ADDRESS, artistWallet, name, description || '', imageUrl, metadataUrl, price || 0, saleType || 'fixed', auctionDuration || 0, featured ? 1 : 0, tx.hash);
+        
+        res.json({
+            success: true,
+            tokenId: tokenId,
+            txHash: tx.hash,
+            metadataUrl: metadataUrl,
+            contract: TOADZ_ORIGINALS_ADDRESS
+        });
+        
+    } catch (err) {
+        console.error('Minting error:', err);
         res.status(500).json({ error: err.message });
     }
 });
