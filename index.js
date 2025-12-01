@@ -1327,8 +1327,8 @@ app.post('/api/storefront/:wallet/verify', (req, res) => {
 // ==================== FILE UPLOAD ====================
 // Store files locally - served from /uploads
 
-// Create uploads directory
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+// Create uploads directory in persistent volume
+const UPLOADS_DIR = '/data/uploads';
 if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
