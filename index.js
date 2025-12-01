@@ -1197,7 +1197,12 @@ const STOREFRONT_FEE = '10'; // 10 FLR
 
 app.get('/api/storefronts', (req, res) => {
     try {
-        const storefronts = db.prepare('SELECT * FROM storefronts ORDER BY created_at DESC').all();
+        const storefronts = db.prepare(`
+            SELECT s.*, 
+                   (SELECT COUNT(*) FROM artist_nfts WHERE LOWER(artist_wallet) = LOWER(s.wallet)) as item_count
+            FROM storefronts s 
+            ORDER BY s.created_at DESC
+        `).all();
         res.json(storefronts);
     } catch (err) {
         res.status(500).json({ error: err.message });
