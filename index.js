@@ -1874,6 +1874,34 @@ app.post('/api/buy-nft', (req, res) => {
     }
 });
 
+// Get recent artist activity for live ticker
+app.get('/api/artist-activity', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+        const nfts = db.prepare(`
+            SELECT n.*, s.name as artist_name
+            FROM artist_nfts n
+            LEFT JOIN storefronts s ON LOWER(n.artist_wallet) = LOWER(s.wallet)
+            WHERE n.price > 0
+            ORDER BY n.created_at DESC
+            LIMIT ?
+        `).all(limit);
+        
+        // Transform to activity format
+        const activity = nfts.map(nft => ({
+            type: nft.sale_type === 'auction' ? 'auction' : 'listed',
+            name: nft.name,
+            artist: nft.artist_name || 'Artist',
+            price: nft.price,
+            timestamp: nft.created_at
+        }));
+        
+        res.json(activity);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ==================== START ====================
 app.listen(PORT, () => {
     console.log(`Toadz Indexer running on port ${PORT}`);
