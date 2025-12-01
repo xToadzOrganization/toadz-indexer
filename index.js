@@ -1893,6 +1893,7 @@ app.get('/api/artist-activity', (req, res) => {
             name: nft.name,
             artist: nft.artist_name || 'Artist',
             price: nft.price,
+            image_url: nft.image_url,
             timestamp: nft.created_at
         }));
         
