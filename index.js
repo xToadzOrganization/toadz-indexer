@@ -2366,6 +2366,56 @@ app.post('/api/storefront/:wallet/announcement', (req, res) => {
     }
 });
 
+// ==================== ADMIN: FORCE REFRESH WALLET ====================
+app.get('/admin/refresh/:address', async (req, res) => {
+    const addr = req.params.address.toLowerCase();
+    const collections = [
+        '0x35afb6ba51839dedd33140a3b704b39933d1e642', // sToadz
+        '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8', // Loft
+        '0x360f8b7d9530f55ab8e52394e6527935635f51e7'  // City
+    ];
+    
+    // Helper to find collection name (case-insensitive)
+    const getColName = (addr) => {
+        for (const [key, val] of Object.entries(COLLECTIONS)) {
+            if (key.toLowerCase() === addr.toLowerCase()) return val.name;
+        }
+        return addr;
+    };
+    
+    console.log(`Force refreshing NFTs for ${addr}...`);
+    let total = 0;
+    const results = {};
+    
+    for (const col of collections) {
+        const contract = new ethers.Contract(col, ERC721_ABI, provider);
+        const colName = getColName(col);
+        results[colName] = [];
+        
+        try {
+            const balance = await contract.balanceOf(addr);
+            console.log(`  ${colName}: found ${balance.toNumber()} NFTs`);
+            
+            for (let i = 0; i < balance.toNumber(); i++) {
+                try {
+                    const tokenId = await contract.tokenOfOwnerByIndex(addr, i);
+                    stmts.upsertOwnership.run(col.toLowerCase(), tokenId.toNumber(), addr);
+                    results[colName].push(tokenId.toNumber());
+                    total++;
+                } catch (e) {
+                    console.log(`    Error getting token ${i}: ${e.message}`);
+                }
+            }
+        } catch (e) {
+            console.log(`  ${colName} error: ${e.message}`);
+            results[colName] = { error: e.message };
+        }
+    }
+    
+    console.log(`Force refresh complete: ${total} NFTs found`);
+    res.json({ success: true, total, wallet: addr, collections: results });
+});
+
 // ==================== START ====================
 app.listen(PORT, () => {
     console.log(`Toadz Indexer running on port ${PORT}`);
