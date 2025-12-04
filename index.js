@@ -2375,6 +2375,9 @@ app.get('/admin/refresh/:address', async (req, res) => {
         '0x360f8b7d9530f55ab8e52394e6527935635f51e7'  // City
     ];
     
+    // Use public RPC for reliability
+    const publicProvider = new ethers.providers.JsonRpcProvider('https://songbird-api.flare.network/ext/C/rpc');
+    
     // Helper to find collection name (case-insensitive)
     const getColName = (addr) => {
         for (const [key, val] of Object.entries(COLLECTIONS)) {
@@ -2388,7 +2391,7 @@ app.get('/admin/refresh/:address', async (req, res) => {
     const results = {};
     
     for (const col of collections) {
-        const contract = new ethers.Contract(col, ERC721_ABI, provider);
+        const contract = new ethers.Contract(col, ERC721_ABI, publicProvider);
         const colName = getColName(col);
         results[colName] = [];
         
