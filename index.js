@@ -2370,48 +2370,52 @@ app.post('/api/storefront/:wallet/announcement', (req, res) => {
 app.get('/admin/refresh/:address', async (req, res) => {
     const addr = req.params.address.toLowerCase();
     const collections = [
-        '0x35afb6ba51839dedd33140a3b704b39933d1e642', // sToadz
-        '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8', // Loft
-        '0x360f8b7d9530f55ab8e52394e6527935635f51e7'  // City
+        { addr: '0x35afb6ba51839dedd33140a3b704b39933d1e642', name: 'sToadz' },
+        { addr: '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8', name: 'Luxury Lofts' },
+        { addr: '0x360f8b7d9530f55ab8e52394e6527935635f51e7', name: 'Songbird City' }
     ];
     
-    // Use public RPC for reliability
     const publicProvider = new ethers.providers.JsonRpcProvider('https://songbird-api.flare.network/ext/C/rpc');
     
-    // Helper to find collection name (case-insensitive)
-    const getColName = (addr) => {
-        for (const [key, val] of Object.entries(COLLECTIONS)) {
-            if (key.toLowerCase() === addr.toLowerCase()) return val.name;
-        }
-        return addr;
-    };
+    const TRANSFER_ABI = [
+        'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
+        'function ownerOf(uint256 tokenId) view returns (address)'
+    ];
     
     console.log(`Force refreshing NFTs for ${addr}...`);
     let total = 0;
     const results = {};
     
     for (const col of collections) {
-        const contract = new ethers.Contract(col, ERC721_ABI, publicProvider);
-        const colName = getColName(col);
-        results[colName] = [];
+        results[col.name] = [];
+        const contract = new ethers.Contract(col.addr, TRANSFER_ABI, publicProvider);
         
         try {
-            const balance = await contract.balanceOf(addr);
-            console.log(`  ${colName}: found ${balance.toNumber()} NFTs`);
+            // Get all transfers TO this address
+            const filter = contract.filters.Transfer(null, addr);
+            const events = await contract.queryFilter(filter, 0, 'latest');
+            console.log(`  ${col.name}: found ${events.length} transfer events`);
             
-            for (let i = 0; i < balance.toNumber(); i++) {
+            // Get unique token IDs
+            const tokenIds = [...new Set(events.map(e => e.args.tokenId.toNumber()))];
+            
+            // Check current owner for each
+            for (const tokenId of tokenIds) {
                 try {
-                    const tokenId = await contract.tokenOfOwnerByIndex(addr, i);
-                    stmts.upsertOwnership.run(col.toLowerCase(), tokenId.toNumber(), addr);
-                    results[colName].push(tokenId.toNumber());
-                    total++;
+                    const owner = await contract.ownerOf(tokenId);
+                    if (owner.toLowerCase() === addr) {
+                        stmts.upsertOwnership.run(col.addr.toLowerCase(), tokenId, addr);
+                        results[col.name].push(tokenId);
+                        total++;
+                    }
                 } catch (e) {
-                    console.log(`    Error getting token ${i}: ${e.message}`);
+                    // Token burned or error - skip
                 }
             }
+            console.log(`  ${col.name}: ${results[col.name].length} currently owned`);
         } catch (e) {
-            console.log(`  ${colName} error: ${e.message}`);
-            results[colName] = { error: e.message };
+            console.log(`  ${col.name} error: ${e.message}`);
+            results[col.name] = { error: e.message };
         }
     }
     
