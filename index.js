@@ -2375,7 +2375,8 @@ app.get('/admin/refresh/:address', async (req, res) => {
         { addr: '0x360f8b7d9530f55ab8e52394e6527935635f51e7', name: 'Songbird City' }
     ];
     
-    const publicProvider = new ethers.providers.JsonRpcProvider('https://songbird-api.flare.network/ext/C/rpc');
+    // Use private node - no block limits
+    const privateProvider = new ethers.providers.JsonRpcProvider('http://135.181.215.126:9650/ext/bc/C/rpc');
     
     const TRANSFER_ABI = [
         'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
@@ -2388,7 +2389,7 @@ app.get('/admin/refresh/:address', async (req, res) => {
     
     for (const col of collections) {
         results[col.name] = [];
-        const contract = new ethers.Contract(col.addr, TRANSFER_ABI, publicProvider);
+        const contract = new ethers.Contract(col.addr, TRANSFER_ABI, privateProvider);
         
         try {
             // Get all transfers TO this address
