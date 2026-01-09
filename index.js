@@ -864,7 +864,7 @@ async function indexNftOwnership() {
 // ==================== API ====================
 const app = express();
 app.use(cors({
-    origin: ['https://xtoadzorganization.github.io', 'http://localhost:3000', 'http://127.0.0.1:5500'],
+   origin: ['https://xtoadzorganization.github.io', 'http://localhost:3000', 'http://127.0.0.1:5500', 'https://stake-zeta-rose.vercel.app'],
     credentials: true
 }));
 app.use(express.json());
