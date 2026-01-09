@@ -872,7 +872,7 @@ app.use(express.json());
 // Live NFT fetch - queries chain directly
 app.get('/live-nfts/:address', async (req, res) => {
   const addr = req.params.address.toLowerCase();
-  const provider = new ethers.JsonRpcProvider('http://135.181.215.126:9650/ext/bc/C/rpc');
+  const provider = new ethers.providers.JsonRpcProvider('http://135.181.215.126:9650/ext/bc/C/rpc');
   
   const collections = [
     { name: 'sToadz', address: '0x35afb6ba51839dedd33140a3b704b39933d1e642', emoji: '🐸' },
