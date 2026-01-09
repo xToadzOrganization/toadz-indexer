@@ -869,9 +869,16 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Live NFT fetch - queries chain directly
+// Live NFT fetch with caching
+const nftCache = {};
 app.get('/live-nfts/:address', async (req, res) => {
   const addr = req.params.address.toLowerCase();
+  
+  // Return cache if fresh (5 min)
+  if (nftCache[addr] && Date.now() - nftCache[addr].time < 300000) {
+    return res.json(nftCache[addr].data);
+  }
+  
   const provider = new ethers.providers.JsonRpcProvider('http://135.181.215.126:9650/ext/bc/C/rpc');
   
   const collections = [
@@ -910,7 +917,9 @@ app.get('/live-nfts/:address', async (req, res) => {
     }
   }
   
-  res.json({ total: results.length, nfts: results });
+  const data = { total: results.length, nfts: results };
+  nftCache[addr] = { time: Date.now(), data };
+  res.json(data);
 });
 
 app.get('/', (req, res) => {
