@@ -869,6 +869,50 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Live NFT fetch - queries chain directly
+app.get('/live-nfts/:address', async (req, res) => {
+  const addr = req.params.address.toLowerCase();
+  const provider = new ethers.JsonRpcProvider('http://135.181.215.126:9650/ext/bc/C/rpc');
+  
+  const collections = [
+    { name: 'sToadz', address: '0x35afb6ba51839dedd33140a3b704b39933d1e642', emoji: '🐸' },
+    { name: 'Luxury Lofts', address: '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8', emoji: '🏢' },
+    { name: 'Songbird City', address: '0x360f8b7d9530f55ab8e52394e6527935635f51e7', emoji: '🌆' }
+  ];
+  
+  const results = [];
+  
+  for (const col of collections) {
+    try {
+      const contract = new ethers.Contract(col.address, [
+        'function balanceOf(address) view returns (uint256)',
+        'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'
+      ], provider);
+      
+      const balance = await contract.balanceOf(addr);
+      if (Number(balance) === 0) continue;
+      
+      const filterTo = contract.filters.Transfer(null, addr);
+      const eventsTo = await contract.queryFilter(filterTo, 0, 'latest');
+      
+      const filterFrom = contract.filters.Transfer(addr, null);
+      const eventsFrom = await contract.queryFilter(filterFrom, 0, 'latest');
+      
+      const owned = new Set();
+      for (const e of eventsTo) owned.add(Number(e.args.tokenId));
+      for (const e of eventsFrom) owned.delete(Number(e.args.tokenId));
+      
+      for (const tokenId of owned) {
+        results.push({ collection: col.address, name: col.name, emoji: col.emoji, tokenId });
+      }
+    } catch (e) {
+      console.log(`Failed ${col.name}:`, e.message);
+    }
+  }
+  
+  res.json({ total: results.length, nfts: results });
+});
+
 app.get('/', (req, res) => {
     res.json({ status: 'ok', service: 'toadz-indexer' });
 });
