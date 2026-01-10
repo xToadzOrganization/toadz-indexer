@@ -419,6 +419,7 @@ async function indexEvents() {
         let stakedEvents = [];
         let unstakedEvents = [];
         let rewardsClaimedEvents = [];
+        let transferEvents = [];
         
         try {
             listedEvents = await marketplace.queryFilter(marketplace.filters.Listed(), fromBlock, toBlock);
@@ -470,8 +471,29 @@ async function indexEvents() {
             console.log(`  RewardsClaimed query FAILED: ${err.message}`);
         }
         
+        // Query Transfer events for key collections
+        const transferAbi = ['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'];
+        const keyCollections = [
+            '0x35afb6ba51839dedd33140a3b704b39933d1e642', // sToadz
+            '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8', // Luxury Lofts
+            '0x360f8b7d9530f55ab8e52394e6527935635f51e7'  // Songbird City
+        ];
+        
+        for (const colAddr of keyCollections) {
+            try {
+                const nftContract = new ethers.Contract(colAddr, transferAbi, provider);
+                const transfers = await nftContract.queryFilter(nftContract.filters.Transfer(), fromBlock, toBlock);
+                transferEvents.push(...transfers);
+            } catch (err) {
+                // Silent fail for individual collections
+            }
+        }
+        if (transferEvents.length > 0) {
+            console.log(`  Transfer query: ${transferEvents.length} events`);
+        }
+        
         const blockNumbers = new Set();
-        [...listedEvents, ...unlistedEvents, ...soldEvents, ...offerMadeEvents, ...offerAcceptedEvents, ...stakedEvents, ...unstakedEvents, ...rewardsClaimedEvents]
+        [...listedEvents, ...unlistedEvents, ...soldEvents, ...offerMadeEvents, ...offerAcceptedEvents, ...stakedEvents, ...unstakedEvents, ...rewardsClaimedEvents, ...transferEvents]
             .forEach(e => blockNumbers.add(e.blockNumber));
         
         const timestamps = {};
@@ -664,6 +686,21 @@ async function indexEvents() {
                     stmts.upsertOwnership.run(collection.toLowerCase(), tokenId, user.toLowerCase());
                 } catch (err) {
                     console.log(`Error processing unstaked event: ${err.message}`);
+                }
+            }
+            
+            // Transfer events - track all NFT ownership changes
+            for (const te of transferEvents) {
+                try {
+                    const to = te.args.to;
+                    const tokenId = te.args.tokenId.toNumber();
+                    const collection = te.address.toLowerCase();
+                    
+                    if (!to || to === ethers.constants.AddressZero) continue;
+                    
+                    stmts.upsertOwnership.run(collection, tokenId, to.toLowerCase());
+                } catch (err) {
+                    console.log(`Error processing transfer event: ${err.message}`);
                 }
             }
             
