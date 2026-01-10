@@ -929,7 +929,7 @@ app.post('/admin/sync-ownership', async (req, res) => {
     try {
       const contract = new ethers.Contract(col.address, transferAbi, provider);
       const currentBlock = await provider.getBlockNumber();
-      const chunkSize = 10000;
+      const chunkSize = 2000;
       
       for (let from = 0; from <= currentBlock; from += chunkSize) {
         const to = Math.min(from + chunkSize - 1, currentBlock);
@@ -948,7 +948,7 @@ app.post('/admin/sync-ownership', async (req, res) => {
           console.log(`  ${col.name}: blocks ${from}-${to} FAILED: ${err.message}`);
         }
         
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 500));
       }
       console.log(`${col.name} complete!`);
     } catch (err) {
