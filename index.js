@@ -906,6 +906,65 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Historical ownership sync - run once
+let syncRunning = false;
+app.post('/admin/sync-ownership', async (req, res) => {
+  if (syncRunning) {
+    return res.json({ status: 'already running' });
+  }
+  
+  syncRunning = true;
+  res.json({ status: 'started' });
+  
+  const collections = [
+    { name: 'sToadz', address: '0x35afb6ba51839dedd33140a3b704b39933d1e642' },
+    { name: 'Luxury Lofts', address: '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8' },
+    { name: 'Songbird City', address: '0x360f8b7d9530f55ab8e52394e6527935635f51e7' }
+  ];
+  
+  const transferAbi = ['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'];
+  
+  for (const col of collections) {
+    console.log(`Syncing ${col.name}...`);
+    try {
+      const contract = new ethers.Contract(col.address, transferAbi, provider);
+      const currentBlock = await provider.getBlockNumber();
+      const chunkSize = 10000;
+      
+      for (let from = 0; from <= currentBlock; from += chunkSize) {
+        const to = Math.min(from + chunkSize - 1, currentBlock);
+        try {
+          const events = await contract.queryFilter(contract.filters.Transfer(), from, to);
+          
+          for (const e of events) {
+            const toAddr = e.args.to;
+            if (toAddr && toAddr !== ethers.constants.AddressZero) {
+              stmts.upsertOwnership.run(col.address.toLowerCase(), e.args.tokenId.toNumber(), toAddr.toLowerCase());
+            }
+          }
+          
+          console.log(`  ${col.name}: blocks ${from}-${to}, ${events.length} transfers`);
+        } catch (err) {
+          console.log(`  ${col.name}: blocks ${from}-${to} FAILED: ${err.message}`);
+        }
+        
+        await new Promise(r => setTimeout(r, 100));
+      }
+      console.log(`${col.name} complete!`);
+    } catch (err) {
+      console.log(`${col.name} failed: ${err.message}`);
+    }
+  }
+  
+  syncRunning = false;
+  console.log('Ownership sync complete!');
+});
+
+app.get('/admin/sync-status', (req, res) => {
+  const counts = db.prepare('SELECT collection, COUNT(*) as count FROM nft_ownership GROUP BY collection').all();
+  res.json({ running: syncRunning, counts });
+});
+
 // Live NFT fetch with caching
 const nftCache = {};
 app.get('/live-nfts/:address', async (req, res) => {
