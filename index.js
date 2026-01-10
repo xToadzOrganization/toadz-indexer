@@ -899,11 +899,14 @@ app.get('/live-nfts/:address', async (req, res) => {
       const balance = await contract.balanceOf(addr);
       if (Number(balance) === 0) continue;
       
+      const currentBlock = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, currentBlock - 2000000);
+      
       const filterTo = contract.filters.Transfer(null, addr);
-      const eventsTo = await contract.queryFilter(filterTo, 0, 'latest');
+      const eventsTo = await contract.queryFilter(filterTo, fromBlock, 'latest');
       
       const filterFrom = contract.filters.Transfer(addr, null);
-      const eventsFrom = await contract.queryFilter(filterFrom, 0, 'latest');
+      const eventsFrom = await contract.queryFilter(filterFrom, fromBlock, 'latest');
       
       const owned = new Set();
       for (const e of eventsTo) owned.add(Number(e.args.tokenId));
