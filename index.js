@@ -882,9 +882,9 @@ app.get('/live-nfts/:address', async (req, res) => {
   const provider = new ethers.providers.JsonRpcProvider('http://135.181.215.126:9650/ext/bc/C/rpc');
   
   const collections = [
-    { name: 'sToadz', address: '0x35afb6ba51839dedd33140a3b704b39933d1e642', emoji: '🐸' },
-    { name: 'Luxury Lofts', address: '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8', emoji: '🏢' },
-    { name: 'Songbird City', address: '0x360f8b7d9530f55ab8e52394e6527935635f51e7', emoji: '🌆' }
+    { name: 'sToadz', address: '0x35afb6ba51839dedd33140a3b704b39933d1e642', emoji: '🐸', supply: 10000 },
+    { name: 'Luxury Lofts', address: '0x91aa85a172dd3e7eea4ad1a4b33e90cbf3b99ed8', emoji: '🏢', supply: 1000 },
+    { name: 'Songbird City', address: '0x360f8b7d9530f55ab8e52394e6527935635f51e7', emoji: '🌆', supply: 5000 }
   ];
   
   const results = [];
@@ -893,27 +893,30 @@ app.get('/live-nfts/:address', async (req, res) => {
     try {
       const contract = new ethers.Contract(col.address, [
         'function balanceOf(address) view returns (uint256)',
-        'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'
+        'function ownerOf(uint256 tokenId) view returns (address)'
       ], provider);
       
       const balance = await contract.balanceOf(addr);
-      if (Number(balance) === 0) continue;
+      const count = Number(balance);
+      if (count === 0) continue;
       
-      const currentBlock = await provider.getBlockNumber();
-      const fromBlock = Math.max(0, currentBlock - 2000000);
-      
-      const filterTo = contract.filters.Transfer(null, addr);
-      const eventsTo = await contract.queryFilter(filterTo, fromBlock, 'latest');
-      
-      const filterFrom = contract.filters.Transfer(addr, null);
-      const eventsFrom = await contract.queryFilter(filterFrom, fromBlock, 'latest');
-      
-      const owned = new Set();
-      for (const e of eventsTo) owned.add(Number(e.args.tokenId));
-      for (const e of eventsFrom) owned.delete(Number(e.args.tokenId));
-      
-      for (const tokenId of owned) {
-        results.push({ collection: col.address, name: col.name, emoji: col.emoji, tokenId });
+      let found = 0;
+      // Batch check 100 at a time
+      for (let start = 1; start <= col.supply && found < count; start += 100) {
+        const checks = [];
+        for (let id = start; id < start + 100 && id <= col.supply; id++) {
+          checks.push(
+            contract.ownerOf(id).then(owner => ({ id, owner })).catch(() => null)
+          );
+        }
+        const batch = await Promise.all(checks);
+        for (const r of batch) {
+          if (r && r.owner.toLowerCase() === addr) {
+            results.push({ collection: col.address, name: col.name, emoji: col.emoji, tokenId: r.id });
+            found++;
+            if (found >= count) break;
+          }
+        }
       }
     } catch (e) {
       console.log(`Failed ${col.name}:`, e.message);
