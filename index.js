@@ -931,7 +931,7 @@ app.post('/admin/sync-ownership', async (req, res) => {
       const currentBlock = await provider.getBlockNumber();
       const chunkSize = 2000;
       
-      for (let from = 100000000; from <= currentBlock; from += chunkSize) {
+      for (let from = 5000000; from <= currentBlock; from += chunkSize) {
         const to = Math.min(from + chunkSize - 1, currentBlock);
         try {
           const events = await contract.queryFilter(contract.filters.Transfer(), from, to);
